@@ -3,7 +3,7 @@ name: Aggiornamento Prezzi 30s (Fast Loop)
 on:
   schedule:
     # Esegui ogni 15 minuti esatti
-    - cron: '*/15 * * * *'
+    - cron: '*/17 * * * *'
   workflow_dispatch:
 
 jobs:
