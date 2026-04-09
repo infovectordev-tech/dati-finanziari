@@ -6,6 +6,7 @@ from datetime import datetime
 import yfinance as yf
 from supabase import create_client, Client
 import math
+import requests
 
 # --- CONFIGURAZIONE SUPABASE ---
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
@@ -17,7 +18,7 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# --- LISTA TICKER (Incolla qui la tua TICKER_MAP completa) ---
+# --- LISTA TICKER (MMC RIMOSSO) ---
 TICKER_MAP = {
     "AAPL": "AAPL", "MSFT": "MSFT", "GOOGL": "GOOGL", "AMZN": "AMZN", "META": "META",
     "TSLA": "TSLA", "V": "V", "JPM": "JPM", "JNJ": "JNJ", "WMT": "WMT",
@@ -33,7 +34,7 @@ TICKER_MAP = {
     "ADP": "ADP", "C": "C", "PLD": "PLD", "NSC": "NSC", "TMUS": "TMUS",
     "ITW": "ITW", "FDX": "FDX", "PNC": "PNC", "SO": "SO", "APD": "APD",
     "ADI": "ADI", "ICE": "ICE", "ZTS": "ZTS", "TJX": "TJX", "CL": "CL",
-    "MMC": "MMC", "EL": "EL", "GM": "GM", "CME": "CME", "EW": "EW",
+    "EL": "EL", "GM": "GM", "CME": "CME", "EW": "EW",
     "AON": "AON", "D": "D", "PSA": "PSA", "AEP": "AEP", "TROW": "TROW",
     "LNTH": "LNTH", "HE": "HE", "BTDR": "BTDR", "NAAS": "NAAS", "SCHL": "SCHL",
     "TGT": "TGT", "SYK": "SYK", "BKNG": "BKNG", "DUK": "DUK", "USB": "USB",
@@ -81,19 +82,24 @@ TICKER_MAP = {
     "COCOA": "CC=F", "GOLD": "GC=F", "SILVER": "SI=F", "OIL": "CL=F", "NATGAS": "NG=F"
 }
 
-# Estraiamo solo i simboli da dare in pasto a Yahoo Finance
 yfinance_symbols = list(TICKER_MAP.values())
 tickers_string = " ".join(yfinance_symbols)
 
+# Simuliamo un browser reale per evitare il rate limit
+session = requests.Session()
+session.headers.update({
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+})
 
 def fetch_and_upload():
     try:
-        print(f"[{datetime.utcnow().strftime('%H:%M:%S')}] Download dati in corso...")
-        # Aggiungiamo auto_adjust=True per togliere il warning
-        df = yf.download(tickers_string, period="5d", interval="1m", progress=False, auto_adjust=True)
+        print(f"[{datetime.utcnow().strftime('%H:%M:%S')}] Download {len(yfinance_symbols)} asset...")
+        
+        # Scarichiamo i dati tramite la sessione con Header
+        df = yf.download(tickers_string, period="2d", interval="1m", progress=False, auto_adjust=True, session=session)
         
         if df.empty:
-            print("Erorre: DataFrame scaricato vuoto.")
+            print("Avviso: Nessun dato ricevuto da Yahoo (possibile Rate Limit attivo).")
             return
 
         df = df.ffill()
@@ -101,73 +107,46 @@ def fetch_and_upload():
         
         for original_sym, yf_sym in TICKER_MAP.items():
             try:
-                # Recuperiamo i valori
                 if isinstance(df.columns, pd.MultiIndex):
                     p = df['Close'][yf_sym].iloc[-1]
                     o = df['Open'][yf_sym].iloc[-1]
-                    h = df['High'][yf_sym].iloc[-1]
-                    l = df['Low'][yf_sym].iloc[-1]
-                    v = df['Volume'][yf_sym].iloc[-1]
                 else:
                     p = df['Close'].iloc[-1]
                     o = df['Open'].iloc[-1]
-                    h = df['High'].iloc[-1]
-                    l = df['Low'].iloc[-1]
-                    v = df['Volume'].iloc[-1]
 
-                # --- CONTROLLO CRUCIALE ---
-                # Verifichiamo che il prezzo sia un numero finito e valido per il JSON
                 if math.isfinite(p):
                     snapshot[original_sym] = {
                         "price": float(p),
-                        "open": float(o) if math.isfinite(o) else float(p),
-                        "high": float(h) if math.isfinite(h) else float(p),
-                        "low": float(l) if math.isfinite(l) else float(p),
-                        "volume": float(v) if math.isfinite(v) else 0.0
+                        "open": float(o) if math.isfinite(o) else float(p)
                     }
-                else:
-                    print(f"Saltato {original_sym}: Dati non validi (NaN)")
-                    
-            except Exception:
-                continue
+            except: continue
         
-        if not snapshot:
-            print("Nessun dato valido da inviare.")
-            return
-
-        payload = {
-            "id": 1,
-            "data": snapshot,
-            "updated_at": datetime.utcnow().isoformat()
-        }
-        
-        supabase.table("market_snapshot").upsert(payload).execute()
-        print(f"[{datetime.utcnow().strftime('%H:%M:%S')}] Snapshot aggiornato con {len(snapshot)} asset.")
+        if snapshot:
+            payload = {"id": 1, "data": snapshot, "updated_at": datetime.utcnow().isoformat()}
+            supabase.table("market_snapshot").upsert(payload).execute()
+            print(f"[{datetime.utcnow().strftime('%H:%M:%S')}] Supabase aggiornato ({len(snapshot)} asset).")
         
     except Exception as e:
-        print(f"Errore durante l'aggiornamento: {e}")
+        print(f"Errore: {e}")
 
-# --- LOOP DI ESECUZIONE (14 MINUTI) ---
 def run_loop():
-    print("Avvio Fast Updater Loop (14 minuti)...")
-    # Imposta il timeout a 14 minuti (840 secondi) per non sforare i limiti di esecuzione parallela o job timeout
+    # Riduciamo il loop totale a 14 minuti per sicurezza
     timeout = time.time() + (14 * 60)
+    print(f"Avvio loop. Prossimo aggiornamento tra 5 minuti...")
     
     while time.time() < timeout:
         start_time = time.time()
-        
         fetch_and_upload()
         
-        # Calcola quanto tempo ha impiegato l'operazione
+        # Aspetta 5 minuti (300 secondi)
         elapsed = time.time() - start_time
+        sleep_time = max(10, 300 - elapsed) 
         
-        # Aspetta 30 secondi, sottraendo il tempo già speso per il calcolo
-        sleep_time = max(0, 60 - elapsed)
-        time.sleep(sleep_time)
-        
-    print("Loop terminato. Attesa del prossimo trigger di GitHub Actions.")
+        if time.time() + sleep_time < timeout:
+            time.sleep(sleep_time)
+        else:
+            break
 
 if __name__ == "__main__":
-    # Importiamo pandas qui per evitare di metterlo in cima se non serve
     import pandas as pd
     run_loop()
