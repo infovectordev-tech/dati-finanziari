@@ -5,6 +5,7 @@ import traceback
 from datetime import datetime
 import yfinance as yf
 from supabase import create_client, Client
+import math
 
 # --- CONFIGURAZIONE SUPABASE ---
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
@@ -84,57 +85,67 @@ TICKER_MAP = {
 yfinance_symbols = list(TICKER_MAP.values())
 tickers_string = " ".join(yfinance_symbols)
 
+
 def fetch_and_upload():
     try:
-        # 1. Scarica i dati in blocco (molto più veloce che fare 100 richieste singole)
-        # Usiamo period="5d" per essere certi di avere dati anche se un mercato oggi è chiuso
         print(f"[{datetime.utcnow().strftime('%H:%M:%S')}] Download dati in corso...")
-        df = yf.download(tickers_string, period="5d", interval="1m", progress=False)
+        # Aggiungiamo auto_adjust=True per togliere il warning
+        df = yf.download(tickers_string, period="5d", interval="1m", progress=False, auto_adjust=True)
         
-        # Pulizia dati (riempie i buchi per i mercati chiusi)
+        if df.empty:
+            print("Erorre: DataFrame scaricato vuoto.")
+            return
+
         df = df.ffill()
-        
         snapshot = {}
         
-        # 2. Estrai l'OHLCV per ogni ticker
         for original_sym, yf_sym in TICKER_MAP.items():
             try:
-                # Se yf.download restituisce un MultiIndex (più ticker)
+                # Recuperiamo i valori
                 if isinstance(df.columns, pd.MultiIndex):
+                    p = df['Close'][yf_sym].iloc[-1]
+                    o = df['Open'][yf_sym].iloc[-1]
+                    h = df['High'][yf_sym].iloc[-1]
+                    l = df['Low'][yf_sym].iloc[-1]
+                    v = df['Volume'][yf_sym].iloc[-1]
+                else:
+                    p = df['Close'].iloc[-1]
+                    o = df['Open'].iloc[-1]
+                    h = df['High'].iloc[-1]
+                    l = df['Low'].iloc[-1]
+                    v = df['Volume'].iloc[-1]
+
+                # --- CONTROLLO CRUCIALE ---
+                # Verifichiamo che il prezzo sia un numero finito e valido per il JSON
+                if math.isfinite(p):
                     snapshot[original_sym] = {
-                        "price": float(df['Close'][yf_sym].iloc[-1]),
-                        "open": float(df['Open'][yf_sym].iloc[-1]),
-                        "high": float(df['High'][yf_sym].iloc[-1]),
-                        "low": float(df['Low'][yf_sym].iloc[-1]),
-                        "volume": float(df['Volume'][yf_sym].iloc[-1])
+                        "price": float(p),
+                        "open": float(o) if math.isfinite(o) else float(p),
+                        "high": float(h) if math.isfinite(h) else float(p),
+                        "low": float(l) if math.isfinite(l) else float(p),
+                        "volume": float(v) if math.isfinite(v) else 0.0
                     }
                 else:
-                    # Se c'è un solo ticker (caso raro ma possibile per test)
-                    snapshot[original_sym] = {
-                        "price": float(df['Close'].iloc[-1]),
-                        "open": float(df['Open'].iloc[-1]),
-                        "high": float(df['High'].iloc[-1]),
-                        "low": float(df['Low'].iloc[-1]),
-                        "volume": float(df['Volume'].iloc[-1])
-                    }
+                    print(f"Saltato {original_sym}: Dati non validi (NaN)")
+                    
             except Exception:
-                # Se un ticker fallisce (es. delistato o errore temporaneo API), lo saltiamo
-                pass
+                continue
         
-        # 3. Prepara il pacchetto per Supabase
+        if not snapshot:
+            print("Nessun dato valido da inviare.")
+            return
+
         payload = {
             "id": 1,
             "data": snapshot,
             "updated_at": datetime.utcnow().isoformat()
         }
         
-        # 4. Upsert (Sovrascrive sempre e solo la riga 1)
         supabase.table("market_snapshot").upsert(payload).execute()
         print(f"[{datetime.utcnow().strftime('%H:%M:%S')}] Snapshot aggiornato con {len(snapshot)} asset.")
         
     except Exception as e:
         print(f"Errore durante l'aggiornamento: {e}")
-        traceback.print_exc()
 
 # --- LOOP DI ESECUZIONE (14 MINUTI) ---
 def run_loop():
