@@ -162,7 +162,7 @@ def run_loop():
         elapsed = time.time() - start_time
         
         # Aspetta 30 secondi, sottraendo il tempo già speso per il calcolo
-        sleep_time = max(0, 30 - elapsed)
+        sleep_time = max(0, 60 - elapsed)
         time.sleep(sleep_time)
         
     print("Loop terminato. Attesa del prossimo trigger di GitHub Actions.")
