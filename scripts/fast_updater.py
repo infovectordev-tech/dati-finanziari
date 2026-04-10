@@ -16,6 +16,7 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # --- LA TUA LISTA COMPLETA ---
+# L'ordine in cui scrivi i ticker qui sarà ESATTAMENTE l'ordine del file JSON finale
 TICKER_MAP = {
     "AAPL": "AAPL", "MSFT": "MSFT", "GOOGL": "GOOGL", "AMZN": "AMZN", "META": "META",
     "TSLA": "TSLA", "V": "V", "JPM": "JPM", "JNJ": "JNJ", "WMT": "WMT",
@@ -79,7 +80,7 @@ TICKER_MAP = {
     "COCOA": "CC=F", "GOLD": "GC=F", "SILVER": "SI=F", "OIL": "CL=F", "NATGAS": "NG=F"
 }
 
-# Creiamo la mappa inversa e la lista univoca
+# Mappa inversa per trovare il nome dell'app partendo dal simbolo Yahoo
 REVERSE_MAP = {}
 for app_sym, yf_sym in TICKER_MAP.items():
     if yf_sym not in REVERSE_MAP:
@@ -88,43 +89,36 @@ for app_sym, yf_sym in TICKER_MAP.items():
 
 unique_yf_symbols = list(set(TICKER_MAP.values()))
 
-# --- FUNZIONE PER GENERARE COOKIE E CRUMB (Il Bypass per l'Errore 401) ---
+# --- FUNZIONE PER GENERARE COOKIE E CRUMB ---
 def get_yahoo_session_and_crumb():
     session = requests.Session()
     session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, come Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         'Accept': '*/*',
         'Accept-Encoding': 'gzip, deflate, br',
         'Connection': 'keep-alive'
     })
     
-    # 1. Peschiamo un cookie dal server root di Yahoo (trucco usato da yfinance)
     try:
         session.get("https://fc.yahoo.com", timeout=5)
-    except:
-        pass
+    except: pass
     
-    # 2. Visitiamo la home page per ulteriore sicurezza sui cookie
     try:
         session.get("https://finance.yahoo.com", timeout=5)
-    except:
-        pass
+    except: pass
 
-    # 3. Richiediamo il Crumb
     crumb = ""
     try:
         res = session.get("https://query1.finance.yahoo.com/v1/test/getcrumb", timeout=5)
         if res.status_code == 200:
             crumb = res.text.strip()
             print(f"[OK] Yahoo Crumb ottenuto: {crumb}")
-        else:
-            print(f"[WARNING] Crumb non trovato. Status code: {res.status_code}")
     except:
         print("[WARNING] Errore di rete durante la richiesta del Crumb.")
         
     return session, crumb
 
-# Inizializziamo sessione e crumb all'avvio dello script
+# Inizializziamo sessione e crumb
 yahoo_session, yahoo_crumb = get_yahoo_session_and_crumb()
 
 def fetch_and_upload():
@@ -132,14 +126,15 @@ def fetch_and_upload():
     
     try:
         print(f"[{datetime.utcnow().strftime('%H:%M:%S')}] Download snapshot via Quote API...")
-        snapshot = {}
+        
+        # Dizionario temporaneo per raccogliere i dati disordinati
+        temp_snapshot = {}
         
         chunk_size = 80
         for i in range(0, len(unique_yf_symbols), chunk_size):
             chunk = unique_yf_symbols[i:i + chunk_size]
             symbols_string = ",".join(chunk)
             
-            # Componiamo l'URL aggiungendo il crumb alla fine se esiste
             url = f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={symbols_string}"
             if yahoo_crumb:
                 url += f"&crumb={yahoo_crumb}"
@@ -152,45 +147,64 @@ def fetch_and_upload():
                 
                 for quote in results:
                     yf_sym = quote.get("symbol")
+                    
+                    # Estrazione OCHLV + Timestamp
                     price = quote.get("regularMarketPrice")
-                    open_price = quote.get("regularMarketPreviousClose", price)
+                    # Se il mercato è chiuso da poco, open o high potrebbero mancare, usiamo i fallback di sicurezza
+                    open_price = quote.get("regularMarketOpen", quote.get("regularMarketPreviousClose", price))
+                    high_price = quote.get("regularMarketDayHigh", price)
+                    low_price = quote.get("regularMarketDayLow", price)
+                    volume = quote.get("regularMarketVolume", 0)
+                    timestamp = quote.get("regularMarketTime", int(time.time()))
                     
                     if price is not None and yf_sym in REVERSE_MAP:
                         for app_sym in REVERSE_MAP[yf_sym]:
-                            snapshot[app_sym] = {
+                            temp_snapshot[app_sym] = {
                                 "price": float(price),
-                                "open": float(open_price)
+                                "open": float(open_price),
+                                "high": float(high_price),
+                                "low": float(low_price),
+                                "volume": float(volume),
+                                "timestamp": int(timestamp)
                             }
             elif response.status_code == 401:
-                # Se il crumb è scaduto, lo rigeneriamo per il prossimo giro
-                print(f"Errore 401 sul blocco {i}. Il Crumb potrebbe essere scaduto. Rigenero...")
+                print(f"Errore 401 sul blocco {i}. Rigenero il Crumb...")
                 yahoo_session, yahoo_crumb = get_yahoo_session_and_crumb()
             else:
                 print(f"Errore API Yahoo sul blocco {i}: HTTP {response.status_code}")
 
-        if not snapshot:
+        if not temp_snapshot:
             print("Avviso: Nessun dato valido recuperato.")
             return
+            
+        # RIORDINO DEI DATI SECONDO LA TICKER_MAP ORIGINALE
+        ordered_snapshot = {}
+        for app_sym in TICKER_MAP.keys():
+            if app_sym in temp_snapshot:
+                ordered_snapshot[app_sym] = temp_snapshot[app_sym]
         
-        # Upload del pacchetto
-        payload = {"id": 1, "data": snapshot, "updated_at": datetime.utcnow().isoformat()}
+        # Upload del pacchetto strutturato e ordinato
+        payload = {"id": 1, "data": ordered_snapshot, "updated_at": datetime.utcnow().isoformat()}
         supabase.table("market_snapshot").upsert(payload).execute()
         
-        print(f"[{datetime.utcnow().strftime('%H:%M:%S')}] Supabase aggiornato con successo ({len(snapshot)} asset).")
+        print(f"[{datetime.utcnow().strftime('%H:%M:%S')}] Supabase aggiornato ({len(ordered_snapshot)} asset, Full OCHLV).")
         
     except Exception as e:
         print(f"Errore critico durante l'aggiornamento: {e}")
+        traceback.print_exc()
 
 def run_loop():
     timeout = time.time() + (14 * 60)
-    print(f"Avvio Fast Updater (Quote API + Crumb Auth). Aggiornamento ogni 60 secondi...")
+    print(f"Avvio Fast Updater. Aggiornamento ogni 30 secondi...")
     
     while time.time() < timeout:
         start_time = time.time()
         fetch_and_upload()
         
         elapsed = time.time() - start_time
-        sleep_time = max(5, 60 - elapsed) 
+        
+        # Impostato a 30 secondi. Puoi abbassarlo a 15 se l'app richiede estrema velocità!
+        sleep_time = max(5, 30 - elapsed) 
         
         if time.time() + sleep_time < timeout:
             time.sleep(sleep_time)
