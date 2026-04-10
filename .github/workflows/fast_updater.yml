@@ -2,8 +2,14 @@ name: Fast Price Updater
 
 on:
   schedule:
-    - cron: '*/15 * * * *' # Gira ogni 15 minuti
+    - cron: '0 */4 * * *' # Prova a partire ogni 4 ore esatte
   workflow_dispatch:
+
+# --- LA MAGIA È QUI ---
+# Garantisce che ci sia sempre e solo UN worker acceso alla volta
+concurrency:
+  group: live-price-updater
+  cancel-in-progress: true 
 
 jobs:
   update-prices:
