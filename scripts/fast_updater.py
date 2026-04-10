@@ -3,10 +3,8 @@ import time
 import json
 import traceback
 from datetime import datetime
-import yfinance as yf
-from supabase import create_client, Client
-import math
 import requests
+from supabase import create_client, Client
 
 # --- CONFIGURAZIONE SUPABASE ---
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
@@ -18,7 +16,7 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# --- LISTA TICKER (MMC RIMOSSO) ---
+# --- LA TUA LISTA COMPLETA ---
 TICKER_MAP = {
     "AAPL": "AAPL", "MSFT": "MSFT", "GOOGL": "GOOGL", "AMZN": "AMZN", "META": "META",
     "TSLA": "TSLA", "V": "V", "JPM": "JPM", "JNJ": "JNJ", "WMT": "WMT",
@@ -82,65 +80,83 @@ TICKER_MAP = {
     "COCOA": "CC=F", "GOLD": "GC=F", "SILVER": "SI=F", "OIL": "CL=F", "NATGAS": "NG=F"
 }
 
-yfinance_symbols = list(TICKER_MAP.values())
-tickers_string = " ".join(yfinance_symbols)
+# 1. Creiamo una mappa inversa per ritrovare facilmente la chiave della tua app
+REVERSE_MAP = {}
+for app_sym, yf_sym in TICKER_MAP.items():
+    if yf_sym not in REVERSE_MAP:
+        REVERSE_MAP[yf_sym] = []
+    REVERSE_MAP[yf_sym].append(app_sym)
 
-# Simuliamo un browser reale per evitare il rate limit
+# Lista unica dei simboli per Yahoo (così evitiamo richieste duplicate se due asset puntano allo stesso ticker)
+unique_yf_symbols = list(set(TICKER_MAP.values()))
+
+# Simuliamo un browser reale
 session = requests.Session()
 session.headers.update({
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'application/json'
 })
 
 def fetch_and_upload():
     try:
-        print(f"[{datetime.utcnow().strftime('%H:%M:%S')}] Download {len(yfinance_symbols)} asset...")
-        
-        # Scarichiamo i dati tramite la sessione con Header
-        df = yf.download(tickers_string, period="2d", interval="1m", progress=False, auto_adjust=True, session=session)
-        
-        if df.empty:
-            print("Avviso: Nessun dato ricevuto da Yahoo (possibile Rate Limit attivo).")
-            return
-
-        df = df.ffill()
+        print(f"[{datetime.utcnow().strftime('%H:%M:%S')}] Download snapshot via Quote API...")
         snapshot = {}
         
-        for original_sym, yf_sym in TICKER_MAP.items():
-            try:
-                if isinstance(df.columns, pd.MultiIndex):
-                    p = df['Close'][yf_sym].iloc[-1]
-                    o = df['Open'][yf_sym].iloc[-1]
-                else:
-                    p = df['Close'].iloc[-1]
-                    o = df['Open'].iloc[-1]
+        # Dividiamo in blocchi da 80 ticker per evitare URL troppo lunghi
+        chunk_size = 80
+        for i in range(0, len(unique_yf_symbols), chunk_size):
+            chunk = unique_yf_symbols[i:i + chunk_size]
+            symbols_string = ",".join(chunk)
+            
+            # API velocissima e ufficiale di Yahoo Finance (restituisce solo un JSON con i prezzi attuali)
+            url = f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={symbols_string}"
+            
+            response = session.get(url, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                results = data.get("quoteResponse", {}).get("result", [])
+                
+                for quote in results:
+                    yf_sym = quote.get("symbol")
+                    price = quote.get("regularMarketPrice")
+                    open_price = quote.get("regularMarketPreviousClose", price) # Usiamo la chiusura precedente come base per le %
+                    
+                    if price is not None and yf_sym in REVERSE_MAP:
+                        for app_sym in REVERSE_MAP[yf_sym]:
+                            snapshot[app_sym] = {
+                                "price": float(price),
+                                "open": float(open_price)
+                            }
+            else:
+                print(f"Errore API Yahoo sul blocco {i}: HTTP {response.status_code}")
 
-                if math.isfinite(p):
-                    snapshot[original_sym] = {
-                        "price": float(p),
-                        "open": float(o) if math.isfinite(o) else float(p)
-                    }
-            except: continue
+        if not snapshot:
+            print("Avviso: Nessun dato valido recuperato.")
+            return
         
-        if snapshot:
-            payload = {"id": 1, "data": snapshot, "updated_at": datetime.utcnow().isoformat()}
-            supabase.table("market_snapshot").upsert(payload).execute()
-            print(f"[{datetime.utcnow().strftime('%H:%M:%S')}] Supabase aggiornato ({len(snapshot)} asset).")
+        # Salviamo il "mega-dizionario" su Supabase in una volta sola
+        payload = {"id": 1, "data": snapshot, "updated_at": datetime.utcnow().isoformat()}
+        supabase.table("market_snapshot").upsert(payload).execute()
+        
+        print(f"[{datetime.utcnow().strftime('%H:%M:%S')}] Supabase aggiornato con successo ({len(snapshot)} asset).")
         
     except Exception as e:
-        print(f"Errore: {e}")
+        print(f"Errore critico durante l'aggiornamento: {e}")
+        traceback.print_exc()
 
 def run_loop():
-    # Riduciamo il loop totale a 14 minuti per sicurezza
+    # Riduciamo il loop totale a 14 minuti per sicurezza del job GitHub
     timeout = time.time() + (14 * 60)
-    print(f"Avvio loop. Prossimo aggiornamento tra 5 minuti...")
+    print(f"Avvio Fast Updater (Quote API). Aggiornamento ogni 60 secondi...")
     
     while time.time() < timeout:
         start_time = time.time()
         fetch_and_upload()
         
-        # Aspetta 5 minuti (300 secondi)
+        # Aspetta 60 secondi prima di ripetere
         elapsed = time.time() - start_time
-        sleep_time = max(10, 300 - elapsed) 
+        sleep_time = max(5, 60 - elapsed) 
         
         if time.time() + sleep_time < timeout:
             time.sleep(sleep_time)
@@ -148,5 +164,4 @@ def run_loop():
             break
 
 if __name__ == "__main__":
-    import pandas as pd
     run_loop()
