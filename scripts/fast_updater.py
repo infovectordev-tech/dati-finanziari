@@ -194,8 +194,13 @@ def fetch_and_upload():
         traceback.print_exc()
 
 def run_loop():
-    timeout = time.time() + (14 * 60)
-    print(f"Avvio Fast Updater. Aggiornamento ogni 30 secondi...")
+    # Timeout di 4 ore e 45 minuti (285 minuti * 60 secondi)
+    # Assicura una sovrapposizione perfetta con il cron di GitHub (ogni 4 ore)
+    timeout_minutes = 285 
+    timeout = time.time() + (timeout_minutes * 60)
+    
+    print(f"Avvio Fast Updater (Quote API). Durata massima: {timeout_minutes} minuti.")
+    print("Aggiornamento ogni 30 secondi...")
     
     while time.time() < timeout:
         start_time = time.time()
@@ -203,12 +208,13 @@ def run_loop():
         
         elapsed = time.time() - start_time
         
-        # Impostato a 30 secondi. Puoi abbassarlo a 15 se l'app richiede estrema velocità!
+        # Pausa intelligente: 30 secondi meno il tempo che ha impiegato a scaricare
         sleep_time = max(5, 30 - elapsed) 
         
         if time.time() + sleep_time < timeout:
             time.sleep(sleep_time)
         else:
+            print("Tempo limite raggiunto. Il job termina per lasciare spazio al successivo.")
             break
 
 if __name__ == "__main__":
