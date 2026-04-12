@@ -226,7 +226,7 @@ def run_loop():
         fetch_and_upload()
         
         elapsed = time.time() - start_time
-        sleep_time = max(5, 30 - elapsed) 
+        sleep_time = max(5, 15 - elapsed)
         
         if time.time() + sleep_time < timeout:
             time.sleep(sleep_time)
