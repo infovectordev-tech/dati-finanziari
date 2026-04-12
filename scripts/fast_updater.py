@@ -202,11 +202,14 @@ def fetch_and_upload():
         json_data = json.dumps(payload)
         
         # Upload diretto del file JSON su Cloudflare R2
+        # Upload diretto del file JSON su Cloudflare R2
         s3_client.put_object(
             Bucket=BUCKET_NAME,
-            Key='prezzi.json',       # Il nome del file che verrà creato nel secchio
-            Body=json_data,          # Il testo JSON che abbiamo appena generato
-            ContentType='application/json' # Essenziale: dice ai browser/app che è un file JSON
+            Key='prezzi.json',
+            Body=json_data,
+            ContentType='application/json',
+            # 🚀 FORZA CLOUDFLARE E IL TELEFONO A SCADERE DOPO 45 SECONDI
+            CacheControl='max-age=45' 
         )
         
         print(f"[{datetime.utcnow().strftime('%H:%M:%S')}] Cloudflare R2 aggiornato ({len(ordered_snapshot)} asset).")
@@ -216,23 +219,26 @@ def fetch_and_upload():
         traceback.print_exc()
 
 def run_loop():
+    # Timeout di 4 ore e 45 minuti per coincidere con il cron di GitHub
     timeout_minutes = 285 
     timeout = time.time() + (timeout_minutes * 60)
     
     print(f"Avvio Fast Updater (R2 API). Durata massima: {timeout_minutes} minuti.")
-    print("Aggiornamento ogni 30 secondi...")
+    print("Aggiornamento ogni 50 secondi...") # 🚀 Coerenza con lo sleep
     
     while time.time() < timeout:
         start_time = time.time()
         fetch_and_upload()
         
         elapsed = time.time() - start_time
-        sleep_time = max(5, 15 - elapsed)
+        
+        # 🚀 50 secondi è perfetto: Yahoo respira e tu hai dati freschi
+        sleep_time = max(5, 50 - elapsed)
         
         if time.time() + sleep_time < timeout:
             time.sleep(sleep_time)
         else:
-            print("Tempo limite raggiunto. Il job termina per lasciare spazio al successivo.")
+            print("Tempo limite raggiunto. Il job termina.")
             break
 
 if __name__ == "__main__":
