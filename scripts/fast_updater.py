@@ -1,22 +1,33 @@
 import os
 import time
 import traceback
+import json
 from datetime import datetime
 import requests
-from supabase import create_client, Client
+import boto3
+from botocore.config import Config
 
-# --- CONFIGURAZIONE SUPABASE ---
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+# --- CONFIGURAZIONE CLOUDFLARE R2 ---
+R2_ACCOUNT_ID = os.environ.get("R2_ACCOUNT_ID")
+R2_ACCESS_KEY_ID = os.environ.get("R2_ACCESS_KEY_ID")
+R2_SECRET_ACCESS_KEY = os.environ.get("R2_SECRET_ACCESS_KEY")
+BUCKET_NAME = "trading-data"  # Assicurati che sia esattamente il nome che hai dato al secchio su R2
 
-if not SUPABASE_URL or not SUPABASE_KEY:
-    print("ERRORE: Chiavi Supabase mancanti!")
+if not R2_ACCOUNT_ID or not R2_ACCESS_KEY_ID or not R2_SECRET_ACCESS_KEY:
+    print("ERRORE: Chiavi Cloudflare R2 mancanti nei Secrets di GitHub!")
     exit(1)
 
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+# Inizializzazione del Client R2 tramite Boto3
+s3_client = boto3.client(
+    's3',
+    endpoint_url=f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com",
+    aws_access_key_id=R2_ACCESS_KEY_ID,
+    aws_secret_access_key=R2_SECRET_ACCESS_KEY,
+    config=Config(signature_version='s3v4'),
+    region_name='auto'  # R2 richiede 'auto' o 'weur' come standard
+)
 
 # --- LA TUA LISTA COMPLETA ---
-# L'ordine in cui scrivi i ticker qui sarà ESATTAMENTE l'ordine del file JSON finale
 TICKER_MAP = {
     "AAPL": "AAPL", "MSFT": "MSFT", "GOOGL": "GOOGL", "AMZN": "AMZN", "META": "META",
     "TSLA": "TSLA", "V": "V", "JPM": "JPM", "JNJ": "JNJ", "WMT": "WMT",
@@ -150,7 +161,6 @@ def fetch_and_upload():
                     
                     # Estrazione OCHLV + Timestamp
                     price = quote.get("regularMarketPrice")
-                    # Se il mercato è chiuso da poco, open o high potrebbero mancare, usiamo i fallback di sicurezza
                     open_price = quote.get("regularMarketOpen", quote.get("regularMarketPreviousClose", price))
                     high_price = quote.get("regularMarketDayHigh", price)
                     low_price = quote.get("regularMarketDayLow", price)
@@ -183,23 +193,32 @@ def fetch_and_upload():
             if app_sym in temp_snapshot:
                 ordered_snapshot[app_sym] = temp_snapshot[app_sym]
         
-        # Upload del pacchetto strutturato e ordinato
-        payload = {"id": 1, "data": ordered_snapshot, "updated_at": datetime.utcnow().isoformat()}
-        supabase.table("market_snapshot").upsert(payload).execute()
+        # Preparazione del payload JSON in formato testo
+        payload = {
+            "data": ordered_snapshot, 
+            "updated_at": datetime.utcnow().isoformat()
+        }
+        json_data = json.dumps(payload)
         
-        print(f"[{datetime.utcnow().strftime('%H:%M:%S')}] Supabase aggiornato ({len(ordered_snapshot)} asset, Full OCHLV).")
+        # Upload diretto del file JSON su Cloudflare R2
+        s3_client.put_object(
+            Bucket=BUCKET_NAME,
+            Key='prezzi.json',       # Il nome del file che verrà creato nel secchio
+            Body=json_data,          # Il testo JSON che abbiamo appena generato
+            ContentType='application/json' # Essenziale: dice ai browser/app che è un file JSON
+        )
+        
+        print(f"[{datetime.utcnow().strftime('%H:%M:%S')}] Cloudflare R2 aggiornato ({len(ordered_snapshot)} asset).")
         
     except Exception as e:
         print(f"Errore critico durante l'aggiornamento: {e}")
         traceback.print_exc()
 
 def run_loop():
-    # Timeout di 4 ore e 45 minuti (285 minuti * 60 secondi)
-    # Assicura una sovrapposizione perfetta con il cron di GitHub (ogni 4 ore)
     timeout_minutes = 285 
     timeout = time.time() + (timeout_minutes * 60)
     
-    print(f"Avvio Fast Updater (Quote API). Durata massima: {timeout_minutes} minuti.")
+    print(f"Avvio Fast Updater (R2 API). Durata massima: {timeout_minutes} minuti.")
     print("Aggiornamento ogni 30 secondi...")
     
     while time.time() < timeout:
@@ -207,8 +226,6 @@ def run_loop():
         fetch_and_upload()
         
         elapsed = time.time() - start_time
-        
-        # Pausa intelligente: 30 secondi meno il tempo che ha impiegato a scaricare
         sleep_time = max(5, 30 - elapsed) 
         
         if time.time() + sleep_time < timeout:
