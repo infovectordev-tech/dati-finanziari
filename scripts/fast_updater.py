@@ -149,6 +149,7 @@ def fetch_and_upload():
             url = f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={symbols_string}"
             if yahoo_crumb:
                 url += f"&crumb={yahoo_crumb}"
+            url += f"&_t={int(time.time())}" # <--- QUESTA RIGA FREGA LA CACHE DI YAHOO
             
             response = yahoo_session.get(url, timeout=10)
             
