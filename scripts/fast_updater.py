@@ -34,6 +34,7 @@ TICKER_MAP = {
     "NVDA": "NVDA", "PYPL": "PYPL", "DIS": "DIS", "NFLX": "NFLX", "NIO": "NIO",
     "NRG": "NRG", "ADBE": "ADBE", "INTC": "INTC", "CSCO": "CSCO", "PFE": "PFE",
     "KO": "KO", "PEP": "PEP", "MRK": "MRK", "ABT": "ABT", "XOM": "XOM",
+    "MA": "MA", "BRK-B": "BRK-B", "AVGO": "AVGO", "UNH": "UNH",
     "CVX": "CVX", "T": "T", "MCD": "MCD", "NKE": "NKE", "HD": "HD",
     "IBM": "IBM", "CRM": "CRM", "BMY": "BMY", "ORCL": "ORCL", "ACN": "ACN",
     "LLY": "LLY", "QCOM": "QCOM", "HON": "HON", "COST": "COST", "SBUX": "SBUX",
@@ -43,7 +44,7 @@ TICKER_MAP = {
     "ADP": "ADP", "C": "C", "PLD": "PLD", "NSC": "NSC", "TMUS": "TMUS",
     "ITW": "ITW", "FDX": "FDX", "PNC": "PNC", "SO": "SO", "APD": "APD",
     "ADI": "ADI", "ICE": "ICE", "ZTS": "ZTS", "TJX": "TJX", "CL": "CL",
-    "EL": "EL", "GM": "GM", "CME": "CME", "EW": "EW",
+    "MMC": "MMC", "EL": "EL", "GM": "GM", "CME": "CME", "EW": "EW",
     "AON": "AON", "D": "D", "PSA": "PSA", "AEP": "AEP", "TROW": "TROW",
     "LNTH": "LNTH", "HE": "HE", "BTDR": "BTDR", "NAAS": "NAAS", "SCHL": "SCHL",
     "TGT": "TGT", "SYK": "SYK", "BKNG": "BKNG", "DUK": "DUK", "USB": "USB",
@@ -51,16 +52,22 @@ TICKER_MAP = {
     "DDOG": "DDOG", "HTZ": "HTZ", "JD": "JD", "LCID": "LCID", "LYFT": "LYFT", "NET": "NET",
     "PDD": "PDD", "PLTR": "PLTR", "RIVN": "RIVN", "ROKU": "ROKU", "SHOP": "SHOP",
     "SNOW": "SNOW", "TWLO": "TWLO", "UBER": "UBER",
-    "ZM": "ZM", "DUOL": "DUOL", "PBR": "PBR", "VALE": "VALE", "AMX": "AMX",
+    "ZM": "ZM", "DUOL": "DUOL", "PBR": "PBR", "VALE": "VALE", "AMX": "AMX", "MELI": "MELI", "RY": "RY",
     "ISP.MI": "ISP.MI", "ENEL.MI": "ENEL.MI", "STLAM.MI": "STLAM.MI",
     "LDO.MI": "LDO.MI", "PST.MI": "PST.MI", "UCG.MI": "UCG.MI",
-    "BA": "BA", "AIR.PA": "AIR.PA", "SAP.DE": "SAP.DE", "SIE.DE": "SIE.DE",
+    "ENI.MI": "ENI.MI", "G.MI": "G.MI", "UNI.MI": "UNI.MI", 
+    "MONC.MI": "MONC.MI", "STM.MI": "STM.MI", "RACE.MI": "RACE.MI",
+    "BA": "BA", "AIR.PA": "AIR.PA", "SAP.DE": "SAP.DE", "SIE.DE": "SIE.DE", "P911.DE": "P911.DE",
     "ALV.DE": "ALV.DE", "VOW3.DE": "VOW3.DE", "MBG.DE": "MBG.DE", "DTE.DE": "DTE.DE",
+    "ASML.AS": "ASML.AS", "NVO": "NVO",
     "SHEL.L": "SHEL.L", "BP.L": "BP.L", "HSBA.L": "HSBA.L", "AZN.L": "AZN.L",
     "ULVR.L": "ULVR.L", "RIO.L": "RIO.L", "MC.PA": "MC.PA", "TTE.PA": "TTE.PA",
     "OR.PA": "OR.PA", "SAN.PA": "SAN.PA", "BNP.PA": "BNP.PA", "SAN.MC": "SAN.MC",
     "IBE.MC": "IBE.MC", "ITX.MC": "ITX.MC", "BBVA.MC": "BBVA.MC", "TEF.MC": "TEF.MC",
     "ITUB": "ITUB", "NU": "NU", "ABEV": "ABEV", "EMAAR.AE": "EMAAR.AE", "DIB.AE": "DIB.AE", "EMIRATESNBD.AE": "EMIRATESNBD.AE",
+    "TSM": "TSM", "TM": "TM", "SONY": "SONY", "HDB": "HDB",
+    "SPY": "SPY", "QQQ": "QQQ", "IWM": "IWM", "EFA": "EFA", "EEM": "EEM", 
+    "TLT": "TLT", "GLD": "GLD", "XLF": "XLF", "XLK": "XLK", "XLE": "XLE",
     "EURUSD": "EURUSD=X", "USDJPY": "USDJPY=X", "GBPUSD": "GBPUSD=X",
     "AUDUSD": "AUDUSD=X", "USDCAD": "USDCAD=X", "USDCHF": "USDCHF=X",
     "NZDUSD": "NZDUSD=X", "EURGBP": "EURGBP=X", "EURJPY": "EURJPY=X",
@@ -88,7 +95,8 @@ TICKER_MAP = {
     "ARBUSD": "ARB11841-USD", "RENDERUSD": "RENDER-USD", "IMXUSD": "IMX10603-USD",
     "SKYUSD": "SKY33038-USD", "UNIUSD": "UNI7083-USD", "AAVEUSD": "AAVE-USD",
     "ORCAUSD": "ORCA-USD", "DAIUSD": "DAI-USD", "SHIBUSD": "SHIB-USD",
-    "COCOA": "CC=F", "GOLD": "GC=F", "SILVER": "SI=F", "OIL": "CL=F", "NATGAS": "NG=F"
+    "COCOA": "CC=F", "GOLD": "GC=F", "SILVER": "SI=F", "OIL": "CL=F", "NATGAS": "NG=F",
+    "COPPER": "HG=F", "WHEAT": "ZW=F", "CORN": "ZC=F", "SOYBEANS": "ZS=F", "SUGAR": "SB=F"
 }
 
 # Mappa inversa per trovare il nome dell'app partendo dal simbolo Yahoo
@@ -163,6 +171,7 @@ def fetch_and_upload():
                     # Estrazione OCHLV + Timestamp
                     price = quote.get("regularMarketPrice")
                     open_price = quote.get("regularMarketOpen", quote.get("regularMarketPreviousClose", price))
+                    prev_close = quote.get("regularMarketPreviousClose", price)
                     high_price = quote.get("regularMarketDayHigh", price)
                     low_price = quote.get("regularMarketDayLow", price)
                     volume = quote.get("regularMarketVolume", 0)
@@ -173,6 +182,7 @@ def fetch_and_upload():
                             temp_snapshot[app_sym] = {
                                 "price": float(price),
                                 "open": float(open_price),
+                                "prevClose": float(prev_close),
                                 "high": float(high_price),
                                 "low": float(low_price),
                                 "volume": float(volume),
