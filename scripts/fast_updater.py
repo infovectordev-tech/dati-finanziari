@@ -66,7 +66,7 @@ TICKER_MAP = {
     "IBE.MC": "IBE.MC", "ITX.MC": "ITX.MC", "BBVA.MC": "BBVA.MC", "TEF.MC": "TEF.MC",
     "ITUB": "ITUB", "NU": "NU", "ABEV": "ABEV", "EMAAR.AE": "EMAAR.AE", "DIB.AE": "DIB.AE", "EMIRATESNBD.AE": "EMIRATESNBD.AE",
     "TSM": "TSM", "TM": "TM", "SONY": "SONY", "HDB": "HDB",
-    "SPY": "SPY", "QQQ": "QQQ", "IWM": "IWM", "EFA": "EFA", "EEM": "EEM", 
+    "SPY": "SPY", "VOO": "VOO", "QQQ": "QQQ", "IWM": "IWM", "EFA": "EFA", "EEM": "EEM", 
     "TLT": "TLT", "GLD": "GLD", "XLF": "XLF", "XLK": "XLK", "XLE": "XLE",
     "EURUSD": "EURUSD=X", "USDJPY": "USDJPY=X", "GBPUSD": "GBPUSD=X",
     "AUDUSD": "AUDUSD=X", "USDCAD": "USDCAD=X", "USDCHF": "USDCHF=X",
