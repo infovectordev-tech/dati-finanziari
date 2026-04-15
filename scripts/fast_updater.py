@@ -168,26 +168,37 @@ def fetch_and_upload():
                 for quote in results:
                     yf_sym = quote.get("symbol")
                     
-                    # Estrazione OCHLV + Timestamp
+                    # Estrazione sicura del Prezzo base
                     price = quote.get("regularMarketPrice")
-                    open_price = quote.get("regularMarketOpen", quote.get("regularMarketPreviousClose", price))
-                    prev_close = quote.get("regularMarketPreviousClose", price)
-                    high_price = quote.get("regularMarketDayHigh", price)
-                    low_price = quote.get("regularMarketDayLow", price)
-                    volume = quote.get("regularMarketVolume", 0)
-                    timestamp = quote.get("regularMarketTime", int(time.time()))
                     
-                    if price is not None and yf_sym in REVERSE_MAP:
-                        for app_sym in REVERSE_MAP[yf_sym]:
-                            temp_snapshot[app_sym] = {
-                                "price": float(price),
-                                "open": float(open_price),
-                                "prevClose": float(prev_close),
-                                "high": float(high_price),
-                                "low": float(low_price),
-                                "volume": float(volume),
-                                "timestamp": int(timestamp)
-                            }
+                    if price is not None:
+                        # Funzione inline per estrarre il dato in modo sicuro o usare un fallback
+                        def get_safe(key, fallback):
+                            val = quote.get(key)
+                            return float(val) if val is not None else float(fallback)
+
+                        # Estrazione OCHLV + Timestamp blindata contro i "None"
+                        prev_close = get_safe("regularMarketPreviousClose", price)
+                        open_price = get_safe("regularMarketOpen", prev_close) # Fallback su prev_close, poi su price
+                        high_price = get_safe("regularMarketDayHigh", price)
+                        low_price = get_safe("regularMarketDayLow", price)
+                        volume = get_safe("regularMarketVolume", 0)
+                        
+                        # Il timestamp è un intero
+                        ts_val = quote.get("regularMarketTime")
+                        timestamp = int(ts_val) if ts_val is not None else int(time.time())
+                        
+                        if yf_sym in REVERSE_MAP:
+                            for app_sym in REVERSE_MAP[yf_sym]:
+                                temp_snapshot[app_sym] = {
+                                    "price": float(price),
+                                    "open": open_price,
+                                    "prevClose": prev_close,
+                                    "high": high_price,
+                                    "low": low_price,
+                                    "volume": volume,
+                                    "timestamp": timestamp
+                                }
             elif response.status_code == 401:
                 print(f"Errore 401 sul blocco {i}. Rigenero il Crumb...")
                 yahoo_session, yahoo_crumb = get_yahoo_session_and_crumb()
