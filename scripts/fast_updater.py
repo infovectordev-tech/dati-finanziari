@@ -56,7 +56,7 @@ TICKER_MAP = {
     "ISP.MI": "ISP.MI", "ENEL.MI": "ENEL.MI", "STLAM.MI": "STLAM.MI",
     "LDO.MI": "LDO.MI", "PST.MI": "PST.MI", "UCG.MI": "UCG.MI",
     "ENI.MI": "ENI.MI", "G.MI": "G.MI", "UNI.MI": "UNI.MI", 
-    "MONC.MI": "MONC.MI", "STMMI.MI": "STM.MI", "RACE.MI": "RACE.MI",
+    "MONC.MI": "MONC.MI", "STM.MI": "STMMI.MI", "RACE.MI": "RACE.MI",
     "BA": "BA", "AIR.PA": "AIR.PA", "SAP.DE": "SAP.DE", "SIE.DE": "SIE.DE", "P911.DE": "P911.DE",
     "ALV.DE": "ALV.DE", "VOW3.DE": "VOW3.DE", "MBG.DE": "MBG.DE", "DTE.DE": "DTE.DE",
     "ASML.AS": "ASML.AS", "NVO": "NVO",
