@@ -172,27 +172,38 @@ def fetch_and_upload():
                     price = quote.get("regularMarketPrice")
                     
                     if price is not None:
-                        # Funzione inline per estrarre il dato base in modo sicuro o usare un fallback
+                        # Funzioni inline per estrazioni sicure
                         def get_safe(key, fallback):
                             val = quote.get(key)
                             return float(val) if val is not None else float(fallback)
 
-                        # Funzione per estrarre dati opzionali (restituisce None se non esiste, utile per pre/post market)
                         def get_optional(key):
                             val = quote.get(key)
                             return float(val) if val is not None else None
 
-                        # Estrazione OCHLV + Timestamp blindata contro i "None"
+                        # Estrazione OCHLV + Timestamp blindata
                         prev_close = get_safe("regularMarketPreviousClose", price)
                         open_price = get_safe("regularMarketOpen", prev_close)
                         high_price = get_safe("regularMarketDayHigh", price)
                         low_price = get_safe("regularMarketDayLow", price)
                         volume = get_safe("regularMarketVolume", 0)
                         
+                        # Il timestamp è un intero
+                        ts_val = quote.get("regularMarketTime")
+                        timestamp = int(ts_val) if ts_val is not None else int(time.time())
+                        
                         # --- NUOVI DATI: MARKET STATE E PRE/POST MARKET ---
                         market_state = quote.get("marketState", "UNKNOWN")
-                        # Creiamo un flag booleano per l'app: True se il mercato è in contrattazione normale
                         is_open = market_state == "REGULAR"
+
+                        # 🚀 FIX: CONTROLLO DI VECCHIAIA OTTIMIZZATO (4 ORE)
+                        # Se Yahoo dice che è aperto ma l'ultimo scambio risale a più di 4 ore fa (14400s),
+                        # forziamo la chiusura. Questo corregge i weekend falsati e i mercati chiusi, 
+                        # senza rischiare falsi positivi per asset momentaneamente poco scambiati.
+                        current_time = int(time.time())
+                        if is_open and (current_time - timestamp) > 14400:
+                            is_open = False
+                            market_state = "CLOSED"
 
                         # Estrazione Pre-Market
                         pre_price = get_optional("preMarketPrice")
@@ -203,11 +214,6 @@ def fetch_and_upload():
                         post_price = get_optional("postMarketPrice")
                         post_change = get_optional("postMarketChange")
                         post_change_pct = get_optional("postMarketChangePercent")
-                        # ---------------------------------------------------
-                        
-                        # Il timestamp è un intero
-                        ts_val = quote.get("regularMarketTime")
-                        timestamp = int(ts_val) if ts_val is not None else int(time.time())
                         
                         if yf_sym in REVERSE_MAP:
                             for app_sym in REVERSE_MAP[yf_sym]:
@@ -274,15 +280,13 @@ def run_loop():
     timeout = time.time() + (timeout_minutes * 60)
     
     print(f"Avvio Fast Updater (R2 API). Durata massima: {timeout_minutes} minuti.")
-    print("Aggiornamento ogni 50 secondi...") # 🚀 Coerenza con lo sleep
+    print("Aggiornamento ogni 50 secondi...")
     
     while time.time() < timeout:
         start_time = time.time()
         fetch_and_upload()
         
         elapsed = time.time() - start_time
-        
-        # 🚀 50 secondi è perfetto: Yahoo respira e tu hai dati freschi
         sleep_time = max(5, 50 - elapsed)
         
         if time.time() + sleep_time < timeout:
