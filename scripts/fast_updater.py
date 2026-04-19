@@ -172,17 +172,38 @@ def fetch_and_upload():
                     price = quote.get("regularMarketPrice")
                     
                     if price is not None:
-                        # Funzione inline per estrarre il dato in modo sicuro o usare un fallback
+                        # Funzione inline per estrarre il dato base in modo sicuro o usare un fallback
                         def get_safe(key, fallback):
                             val = quote.get(key)
                             return float(val) if val is not None else float(fallback)
 
+                        # Funzione per estrarre dati opzionali (restituisce None se non esiste, utile per pre/post market)
+                        def get_optional(key):
+                            val = quote.get(key)
+                            return float(val) if val is not None else None
+
                         # Estrazione OCHLV + Timestamp blindata contro i "None"
                         prev_close = get_safe("regularMarketPreviousClose", price)
-                        open_price = get_safe("regularMarketOpen", prev_close) # Fallback su prev_close, poi su price
+                        open_price = get_safe("regularMarketOpen", prev_close)
                         high_price = get_safe("regularMarketDayHigh", price)
                         low_price = get_safe("regularMarketDayLow", price)
                         volume = get_safe("regularMarketVolume", 0)
+                        
+                        # --- NUOVI DATI: MARKET STATE E PRE/POST MARKET ---
+                        market_state = quote.get("marketState", "UNKNOWN")
+                        # Creiamo un flag booleano per l'app: True se il mercato è in contrattazione normale
+                        is_open = market_state == "REGULAR"
+
+                        # Estrazione Pre-Market
+                        pre_price = get_optional("preMarketPrice")
+                        pre_change = get_optional("preMarketChange")
+                        pre_change_pct = get_optional("preMarketChangePercent")
+
+                        # Estrazione Post-Market
+                        post_price = get_optional("postMarketPrice")
+                        post_change = get_optional("postMarketChange")
+                        post_change_pct = get_optional("postMarketChangePercent")
+                        # ---------------------------------------------------
                         
                         # Il timestamp è un intero
                         ts_val = quote.get("regularMarketTime")
@@ -197,7 +218,17 @@ def fetch_and_upload():
                                     "high": high_price,
                                     "low": low_price,
                                     "volume": volume,
-                                    "timestamp": timestamp
+                                    "timestamp": timestamp,
+                                    
+                                    # Nuovi campi aggiunti al JSON finale
+                                    "marketState": market_state,
+                                    "isOpen": is_open,
+                                    "preMarketPrice": pre_price,
+                                    "preMarketChange": pre_change,
+                                    "preMarketChangePct": pre_change_pct,
+                                    "postMarketPrice": post_price,
+                                    "postMarketChange": post_change,
+                                    "postMarketChangePct": post_change_pct
                                 }
             elif response.status_code == 401:
                 print(f"Errore 401 sul blocco {i}. Rigenero il Crumb...")
@@ -223,13 +254,11 @@ def fetch_and_upload():
         json_data = json.dumps(payload)
         
         # Upload diretto del file JSON su Cloudflare R2
-        # Upload diretto del file JSON su Cloudflare R2
         s3_client.put_object(
             Bucket=BUCKET_NAME,
             Key='prezzi.json',
             Body=json_data,
             ContentType='application/json',
-            # 🚀 FORZA CLOUDFLARE E IL TELEFONO A SCADERE DOPO 45 SECONDI
             CacheControl='max-age=45' 
         )
         
