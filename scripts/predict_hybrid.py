@@ -4,7 +4,7 @@ import feedparser
 import math
 import json
 import time
-import requests # AGGIUNTO
+import requests
 from datetime import datetime, timedelta
 import pandas as pd
 import numpy as np
@@ -353,11 +353,11 @@ TICKER_MAP = {
     "CHFJPY": "CHFJPY=X", "EURAUD": "EURAUD=X", "EURNZD": "EURNZD=X",
     "EURCAD": "EURCAD=X", "EURCHF": "EURCHF=X", "GBPCHF": "GBPCHF=X",
     "AUDCAD": "AUDCAD=X",
-    "SPX500": "^GSPC", "DJ30": "^DJI", "NAS100": "^NDX", "NASCOMP": "^IXIC",
-    "RUS2000": "^RUT", "VIX": "^VIX", "EU50": "^STOXX50E", "ITA40": "FTSEMIB.MI",
-    "GER40": "^GDAXI", "UK100": "^FTSE", "FRA40": "^FCHI", "SWI20": "^SSMI",
-    "ESP35": "^IBEX", "NETH25": "^AEX", "JPN225": "^N225", "HKG50": "^HSI",
-    "CHN50": "000001.SS", "IND50": "^NSEI", "KOR200": "^KS200",
+    "SPX500": "SXR8.DE", "DJ30": "DJI", "NAS100": "SXRV.DE", "NASCOMP": "SXRV.DE",
+    "RUS2000": "EXXU.DE", "VIX": "^VIX", "EU50": "EUN2.DE", "ITA40": "XMIB.DE",
+    "GER40": "EXS1.DE", "UK100": "ISF.L", "FRA40": "CAC", "SWI20": "SSMI",
+    "ESP35": "IBEX", "NETH25": "AEX", "JPN225": "XDJP.DE", "HKG50": "HSI",
+    "CHN50": "000001.SS", "IND50": "NSEI", "KOR200": "KS200",
     "BTCUSD": "BTC-USD", "ETHUSD": "ETH-USD", "LTCUSD": "LTC-USD",
     "XRPUSD": "XRP-USD", "BCHUSD": "BCH-USD", "EOSUSD": "EOS-USD",
     "XLMUSD": "XLM-USD", "ADAUSD": "ADA-USD", "TRXUSD": "TRX-USD",
@@ -586,21 +586,21 @@ symbol_name_map = {
     "AUDCAD": ["AUD/CAD", "Aussie vs Canadian Dollar"],
 
     #Index
-    "SPX500": ["S&P 500", "SPX", "S&P", "S&P 500 Index", "Standard & Poor's 500"],
+    "SPX500": ["S&P 500", "SPX", "S&P", "S&P 500 Index", "Standard & Poor's 500", "iShares Core S&P 500 UCITS ETF"],
     "DJ30": ["Dow Jones", "DJIA", "Dow Jones Industrial", "Dow 30", "Dow Jones Industrial Average"],
-    "NAS100": ["Nasdaq 100", "NDX", "Nasdaq100", "NASDAQ 100 Index"],
-    "NASCOMP": ["Nasdaq Composite", "IXIC", "Nasdaq", "Nasdaq Composite Index"],
-    "RUS2000": ["Russell 2000", "RUT", "Russell Small Cap", "Russell 2K"],
+    "NAS100": ["Nasdaq 100", "NDX", "Nasdaq100", "NASDAQ 100 Index", "iShares Nasdaq 100 UCITS ETF"],
+    "NASCOMP": ["Nasdaq Composite", "IXIC", "Nasdaq", "Nasdaq Composite Index", "iShares Nasdaq 100 UCITS ETF"],
+    "RUS2000": ["Russell 2000", "RUT", "Russell Small Cap", "Russell 2K", "Xtrackers Russell 2000 UCITS ETF"],
     "VIX": ["VIX", "Volatility Index", "Fear Gauge", "CBOE Volatility Index"],
-    "EU50": ["Euro Stoxx 50", "Euro Stoxx", "STOXX50", "Euro Stoxx 50 Index"],
-    "ITA40": ["FTSE MIB", "MIB", "FTSE MIB Index", "Italy 40"],
-    "GER40": ["DAX", "DAX 40", "German DAX", "Frankfurt DAX"],
-    "UK100": ["FTSE 100", "FTSE", "UK FTSE 100", "FTSE Index"],
+    "EU50": ["Euro Stoxx 50", "Euro Stoxx", "STOXX50", "Euro Stoxx 50 Index", "iShares Core Euro Stoxx 50 UCITS ETF"],
+    "ITA40": ["FTSE MIB", "MIB", "FTSE MIB Index", "Italy 40", "Xtrackers FTSE MIB UCITS ETF"],
+    "GER40": ["DAX", "DAX 40", "German DAX", "Frankfurt DAX", "iShares Core DAX UCITS ETF"],
+    "UK100": ["FTSE 100", "FTSE", "UK FTSE 100", "FTSE Index", "iShares Core FTSE 100 UCITS ETF"],
     "FRA40": ["CAC 40", "CAC", "France CAC 40", "CAC40 Index"],
     "SWI20": ["Swiss Market Index", "SMI", "Swiss SMI", "Swiss Market"],
     "ESP35": ["IBEX 35", "IBEX", "Spanish IBEX", "IBEX 35 Index"],
     "NETH25": ["AEX", "Dutch AEX", "Amsterdam Exchange", "AEX Index"],
-    "JPN225": ["Nikkei 225", "Nikkei", "Japan Nikkei", "Nikkei Index"],
+    "JPN225": ["Nikkei 225", "Nikkei", "Japan Nikkei", "Nikkei Index", "Xtrackers Nikkei 225 UCITS ETF"],
     "HKG50": ["Hang Seng", "Hong Kong Hang Seng", "Hang Seng Index"],
     "CHN50": ["Shanghai Composite", "SSEC", "China Shanghai", "Shanghai Composite Index"],
     "IND50": ["Nifty 50", "Nifty", "India Nifty", "Nifty 50 Index"],
@@ -1781,7 +1781,7 @@ print("Classifica aggiornata con successo!")
 html_classifica_pro = ["<html><head><title>Classifica Combinata</title></head><body>",
                        "<h1>Classifica Combinata (Hybrid Logic)</h1>",
                        "<table border='1'><tr><th>Simbolo</th><th>Hybrid Score</th></tr>"]
-for symbol, media in sorted_symbols: # Usa sorted_symbols invece di sorted_symbols_pro (era questo l'errore NameError!)
+for symbol, media in sorted_symbols: 
     html_classifica_pro.append(f"<tr><td>{symbol}</td><td>{media:.2f}%</td></tr>")
 html_classifica_pro.append("</table></body></html>")
 r2_manager.write_file(pro_path, "\n".join(html_classifica_pro), is_json=False)
