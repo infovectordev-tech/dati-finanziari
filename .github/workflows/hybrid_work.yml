@@ -1,4 +1,4 @@
-name: Aggiorna dati Hybrid
+name: Aggiorna dati Hybrid (Cloudflare R2)
 
 on:
   workflow_dispatch:
@@ -9,16 +9,16 @@ on:
     # 1. Notte fonda / Apertura Asia (Esistente)
     - cron: '10 0 * * *'  
     
-    # 2. Mattina presto (NUOVO - circa 05:00 IT)
+    # 2. Mattina presto (circa 05:00 IT)
     - cron: '0 4 * * *'    
     
     # 3. Apertura Europa (Esistente)
     - cron: '10 7 * * *'   
     
-    # 4. Metà mattina Europa (NUOVO - circa 11:00 IT)
+    # 4. Metà mattina Europa (circa 11:00 IT)
     - cron: '0 10 * * *'    
     
-    # 5. Pre-market USA / Pranzo (NUOVO - circa 13:30 IT)
+    # 5. Pre-market USA / Pranzo (circa 13:30 IT)
     - cron: '30 12 * * *'   
     
     # 6. Apertura USA (Esistente)
@@ -27,7 +27,7 @@ on:
     # 7. Chiusura Europa / Metà seduta USA (Esistente)
     - cron: '30 16 * * *'  
     
-    # 8. Chiusura USA (NUOVO - circa 21:30 IT)
+    # 8. Chiusura USA (circa 21:30 IT)
     - cron: '3 20 * * *'   
 
     # 9. Per gli asset h24 come bitcoin e forex (circa 22:40 IT)
@@ -39,10 +39,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4 # Aggiornato alla v4 (più recente e performante)
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v5 # Aggiornato alla v5
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
@@ -60,31 +60,29 @@ jobs:
           # Librerie base e scientifiche
           pip install --no-cache-dir --upgrade numpy pandas scipy statsmodels
 
-          # Librerie di rete e finanza (aggiunto supabase)
-          pip install --no-cache-dir --upgrade yfinance==0.2.63 requests urllib3 feedparser lxml supabase
+          # Librerie di rete, finanza e Cloudflare R2 (aggiunto boto3)
+          pip install --no-cache-dir --upgrade yfinance==0.2.63 requests urllib3 feedparser lxml boto3
 
-          # Analisi dati, ML, NLP e NLTK (rimosso PyGithub)
-          pip install --no-cache-dir --upgrade ta \
-            beautifulsoup4 scikit-learn xgboost \
-            torch transformers tiktoken blobfile argostranslate \
-            nltk
+          # Analisi tecnica, HTML e NLP (rimossi pacchetti ML pesanti e argostranslate)
+          pip install --no-cache-dir --upgrade ta beautifulsoup4 nltk
 
-          # spaCy aggiornato a una versione compatibile con Python 3.10
+          # spaCy (mantenuto per retrocompatibilità come da tuo script)
           pip install --no-cache-dir --prefer-binary spacy==3.7.2
 
       - name: Download NLP models (Spacy & NLTK)
         run: |
-          # Scarica il modello Spacy (per compatibilità legacy)
+          # Scarica il modello Spacy
           python -m spacy download en_core_web_sm-3.7.1
           
-          # Scarica il lessico VADER per NLTK (per il nuovo Hybrid Score)
+          # Scarica il lessico VADER per NLTK (per l'Hybrid Score)
           python -m nltk.downloader vader_lexicon
 
       - name: Debug versions
         run: |
           python - <<'EOF'
-          import yfinance, requests, urllib3, numpy, pandas, spacy, scipy, statsmodels, nltk
+          import yfinance, requests, boto3, numpy, pandas, spacy, scipy, statsmodels, nltk
           print("yfinance =", yfinance.__version__)
+          print("boto3 =", boto3.__version__)
           print("numpy =", numpy.__version__)
           print("pandas =", pandas.__version__)
           print("spacy =", spacy.__version__)
@@ -94,8 +92,10 @@ jobs:
       - name: Run Hybrid Prediction Script
         env:
           # Passaggio delle chiavi da GitHub Secrets allo script Python
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          # FMP_API_KEY: ${{ secrets.FMP_API_KEY }} # Scommenta questa riga se metti la chiave FMP nei secrets
-        # Esegue il nuovo script. Assicurati che il file sia nella cartella 'scripts'
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+          
+        # Esegue il nuovo script
         run: python scripts/predict_hybrid.py
