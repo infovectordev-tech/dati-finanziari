@@ -53,9 +53,8 @@ FMP_API_KEY = os.getenv("FMP_API_KEY")
 
 # --- CLASSE GESTORE CLOUDFLARE R2 ---
 class CloudflareR2Manager:
-    def __init__(self, bucket_name="trading-data", base_folder="analisi"):
+    def __init__(self, bucket_name="trading-data"):
         self.bucket_name = bucket_name
-        self.base_folder = base_folder.strip("/")
         
         self.account_id = os.environ.get("R2_ACCOUNT_ID")
         self.access_key = os.environ.get("R2_ACCESS_KEY_ID")
@@ -73,54 +72,44 @@ class CloudflareR2Manager:
             region_name='auto'
         )
 
-    def _get_full_path(self, file_path):
-        """Unisce la cartella base al percorso del file (se presente)."""
-        if self.base_folder and not file_path.startswith(self.base_folder):
-            return f"{self.base_folder}/{file_path}"
-        return file_path
-
     def read_json(self, file_path):
-        """Legge un file JSON da R2. Ritorna {} se non esiste."""
-        full_path = self._get_full_path(file_path)
+        """Legge un file JSON da R2. Ritorna {} se non esiste (ottimo per i file storici)."""
         try:
-            response = self.s3.get_object(Bucket=self.bucket_name, Key=full_path)
+            response = self.s3.get_object(Bucket=self.bucket_name, Key=file_path)
             content = response['Body'].read().decode('utf-8')
             return json.loads(content)
         except ClientError as e:
             if e.response['Error']['Code'] == 'NoSuchKey':
                 return {} 
-            print(f"Errore R2 in lettura di {full_path}: {e}")
-            return {}
-        except Exception as e:
-            print(f"Errore generico lettura {full_path}: {e}")
+            print(f"Errore R2 in lettura di {file_path}: {e}")
             return {}
 
-    def write_file(self, file_path, content, is_json=False):
-        """Scrive un file su R2 (HTML o JSON)."""
-        full_path = self._get_full_path(file_path)
-        content_type = 'application/json' if is_json else 'text/html'
-        
-        if is_json and not isinstance(content, str):
-            content = json.dumps(content, indent=4)
+    def write_file(self, file_path, content):
+        """
+        Scrive il file ESATTAMENTE come glielo passi.
+        Determina automaticamente se è JSON o HTML in base all'estensione del nome file,
+        fondamentale per i parser delle app.
+        """
+        content_type = 'application/json' if file_path.endswith('.json') else 'text/html'
             
         try:
             self.s3.put_object(
                 Bucket=self.bucket_name,
-                Key=full_path,
+                Key=file_path,
                 Body=content,
                 ContentType=content_type,
-                CacheControl='max-age=14400' # 4 Ore
+                CacheControl='max-age=14400' # Header 4 ore
             )
             return True
         except Exception as e:
-            print(f"Errore R2 in scrittura di {full_path}: {e}")
+            print(f"Errore R2 in scrittura di {file_path}: {e}")
             return False
 
 # --- INIZIALIZZAZIONE CLOUDFLARE ---
 r2_manager = CloudflareR2Manager(bucket_name="trading-data", base_folder="")
 
 # --- CONFIGURAZIONE CARTELLA OUTPUT SU R2 ---
-TARGET_FOLDER = "analisi"
+TARGET_FOLDER = "hybrid_results"
 TEST_FOLDER = f"{TARGET_FOLDER}/forward_testing" 
 ARCHIVE_FOLDER = f"{TARGET_FOLDER}/news_archive"
 
