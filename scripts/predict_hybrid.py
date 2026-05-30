@@ -2587,4 +2587,14 @@ def salva_correlazioni_html(correlazioni, r2_mgr, file_path=corr_pro_path):
 print("Calcolo Correlazioni...")
 correlazioni = calcola_correlazioni(dati_storici_all)
 salva_correlazioni_html(correlazioni, r2_manager)
+
+# --- NUOVO: SALVATAGGIO DATA AGGIORNAMENTO PER L'APP ANDROID ---
+from datetime import datetime
+print("Salvataggio timestamp aggiornamento...")
+update_data = {
+    # Formato pronto e già impaginato in modo leggibile (es. "Oct 15, 2026 - 14:30")
+    "display_date": datetime.now().strftime("%b %d, %Y - %H:%M")
+}
+r2_manager.write_file(f"{TARGET_FOLDER}/last_update.json", update_data, is_json=True)
+
 print("Tutte le operazioni completate con successo!")
