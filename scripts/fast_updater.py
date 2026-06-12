@@ -31,7 +31,7 @@ s3_client = boto3.client(
 TICKER_MAP = {
     "AAPL": "AAPL", "MSFT": "MSFT", "GOOGL": "GOOGL", "AMZN": "AMZN", "META": "META",
     "TSLA": "TSLA", "V": "V", "JPM": "JPM", "JNJ": "JNJ", "WMT": "WMT",
-    "NVDA": "NVDA", "PYPL": "PYPL", "DIS": "DIS", "NFLX": "NFLX", "NIO": "NIO",
+    "NVDA": "NVDA", "PYPL": "PYPL", "SPCX": "SPCX", "DIS": "DIS", "NFLX": "NFLX", "NIO": "NIO",
     "NRG": "NRG", "ADBE": "ADBE", "INTC": "INTC", "CSCO": "CSCO", "PFE": "PFE",
     "KO": "KO", "PEP": "PEP", "MRK": "MRK", "ABT": "ABT", "XOM": "XOM",
     "MA": "MA", "BRK-B": "BRK-B", "AVGO": "AVGO", "UNH": "UNH",
