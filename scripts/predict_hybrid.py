@@ -2569,7 +2569,7 @@ r2_manager.write_file(f"{TARGET_FOLDER}/last_update.json", update_data, is_json=
 
 
 # ==============================================================================
-# 9. GENERATORE PROGRAMMATIC SEO STILE INVESTING.COM / APP UI (LOGO PNG FIXED)
+# 9. GENERATORE PROGRAMMATIC SEO PROFESSIONALE (STILE INVESTING.COM)
 # ==============================================================================
 def clean_slug(symbol):
     return re.sub(r'[^a-z0-9]+', '-', symbol.lower()).strip('-')
@@ -2595,10 +2595,13 @@ def format_smart_price(val):
         return "0.00"
 
 def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, news_by_symbol):
-    print("Avvio generazione 260+ pagine SEO stile App TradeGPT...")
+    print("Avvio generazione 260+ pagine SEO professionali stile Investing.com...")
     seo_folder = "public_seo/assets"
     today_iso = datetime.utcnow().strftime("%Y-%m-%d")
     app_logo_url = "https://tradegpt-vector.com/tradeGPT_glass_logo.png"
+    
+    # Vero logo ufficiale a 4 colori del Google Play Store in un badge bianco arrotondato
+    play_svg = '<span style="background:#ffffff; width:24px; height:24px; border-radius:6px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; box-shadow:0 1px 3px rgba(0,0,0,0.2);"><img src="https://upload.wikimedia.org/wikipedia/commons/d/d0/Google_Play_Arrow_logo.svg" alt="Google Play" width="15" height="15" style="display:block;"></span>'
     
     prezzi_live_root = r2_manager.read_json("prezzi.json")
     prezzi_live_map = prezzi_live_root.get("data", {}) if isinstance(prezzi_live_root, dict) else {}
@@ -2624,7 +2627,7 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
             sector_raw = asset_sector_map.get(sym, "Global Markets")
             sector_clean = re.sub(r'^\d+\.\s*', '', sector_raw)
 
-            company_desc = f"{full_name} ({upper_sym}) is tracked in real time by TradeGPT quantitative algorithms across {sector_clean}."
+            company_desc = f"{full_name} ({upper_sym}) is tracked by TradeGPT quantitative algorithms across {sector_clean}."
             try:
                 gh_info_url = f"https://raw.githubusercontent.com/pammyhouse/dati-finanziari/main/{upper_sym}.html"
                 r_info = requests.get(gh_info_url, timeout=3)
@@ -2656,7 +2659,7 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
             week_change = crescita_settimanale.get(sym, 0.0)
 
             is_open = live_obj.get("isOpen", False)
-            status_html = "Market Open ☀️" if is_open else "At close 🌙"
+            status_html = "Market Open" if is_open else "At close"
             
             ext_html = ""
             if not is_open:
@@ -2664,12 +2667,12 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
                     ep = float(live_obj["postMarketPrice"])
                     ec = float(live_obj["postMarketChangePct"])
                     ecol = "#10b981" if ec >= 0 else "#ef4444"
-                    ext_html = f"<div style='font-family:\"Space Mono\",monospace; font-size:0.88rem; margin-top:4px;'>Post-market <span style='color:{ecol};'>{format_smart_price(ep)} ({ec:+.2f}%)</span></div>"
+                    ext_html = f"<div style='font-family:\"Space Mono\",monospace; font-size:0.84rem; margin-top:6px; color:#9ca3af;'>Post-market: <span style='color:{ecol};'>{format_smart_price(ep)} ({ec:+.2f}%)</span></div>"
                 elif live_obj.get("preMarketPrice") and live_obj.get("preMarketChangePct") is not None:
                     ep = float(live_obj["preMarketPrice"])
                     ec = float(live_obj["preMarketChangePct"])
                     ecol = "#10b981" if ec >= 0 else "#ef4444"
-                    ext_html = f"<div style='font-family:\"Space Mono\",monospace; font-size:0.88rem; margin-top:4px;'>Pre-market <span style='color:{ecol};'>{format_smart_price(ep)} ({ec:+.2f}%)</span></div>"
+                    ext_html = f"<div style='font-family:\"Space Mono\",monospace; font-size:0.84rem; margin-top:6px; color:#9ca3af;'>Pre-market: <span style='color:{ecol};'>{format_smart_price(ep)} ({ec:+.2f}%)</span></div>"
 
             d_min = float(low_s.iloc[-1])
             d_max = float(high_s.iloc[-1])
@@ -2699,28 +2702,27 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
                 chart_records.append({"time": d_str, "open": round(o_v, 4), "high": round(h_v, 4), "low": round(l_v, 4), "close": round(c_v, 4)})
             chart_json_str = json.dumps(chart_records)
 
+            play_link = f"https://play.google.com/store/apps/details?id=com.vectordev.einsight&referrer=utm_source%3Dwebsite%26utm_medium%3Dasset_page%26utm_campaign%3D{upper_sym}"
+
             raw_news = news_by_symbol.get(sym, [])[:4]
             news_cards_html = ""
             if raw_news:
                 n_items = []
                 for n_title, _, _, n_src, _, n_date in raw_news:
-                    d_fmt = n_date.strftime("%b %d") if hasattr(n_date, 'strftime') else ""
+                    d_fmt = n_date.strftime("%b %d, %Y") if hasattr(n_date, 'strftime') else ""
                     n_items.append(f"""
-                    <div style="padding:12px 0; border-bottom:1px solid rgba(255,255,255,0.06); display:flex; justify-content:space-between; align-items:center; gap:12px;">
+                    <div style="padding:12px 0; border-bottom:1px solid #1e2430; display:flex; justify-content:space-between; align-items:center; gap:14px;">
                         <div>
-                            <div style="font-size:0.92rem; color:#fff; font-weight:500;">{n_title}</div>
-                            <div style="font-size:0.75rem; color:#9ca3af; margin-top:3px;">{n_src} • {d_fmt}</div>
+                            <div style="font-size:0.88rem; color:#f3f4f6; font-weight:500;">{n_title}</div>
+                            <div style="font-size:0.75rem; color:#6b7280; margin-top:3px;">{n_src} • {d_fmt}</div>
                         </div>
-                        <a href="https://play.google.com/store/apps/details?id=com.vectordev.einsight&referrer=utm_source%3Dwebsite%26utm_medium%3Dnews_sentiment%26utm_campaign%3D{upper_sym}" target="_blank" style="background:rgba(16,185,129,0.15); border:1px solid rgba(16,185,129,0.4); color:#34d399; padding:5px 10px; border-radius:12px; font-size:0.75rem; font-family:'Space Mono',monospace; text-decoration:none; white-space:nowrap;">
-                            🔒 Sentiment %
+                        <a href="{play_link}" target="_blank" style="background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.3); color:#10b981; padding:4px 10px; border-radius:4px; font-size:0.72rem; font-family:'Space Mono',monospace; text-decoration:none; white-space:nowrap;">
+                            Sentiment in App
                         </a>
                     </div>""")
                 news_cards_html = f"""
-                <div class="card-section">
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                        <h2 style="font-size:1.15rem; margin:0; color:#fff;">📰 Latest {upper_sym} News</h2>
-                        <span style="font-size:0.75rem; color:#34d399;">AI Sentiment Score in App</span>
-                    </div>
+                <div class="panel-box">
+                    <h2 class="panel-title"><span>Latest {upper_sym} Headlines</span><span style="font-size:0.75rem; color:#9ca3af; font-weight:400;">AI Sentiment Scored</span></h2>
                     {''.join(n_items)}
                 </div>"""
 
@@ -2733,18 +2735,16 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
                 s_logo = f"https://raw.githubusercontent.com/pammyhouse/dati-finanziari/main/loghi/{s_sym.upper()}_img.png"
                 s_fmp = f"https://financialmodelingprep.com/image-stock/{s_sym.upper()}.png"
                 similar_html_list.append(f"""
-                <a href="https://tradegpt-vector.com/assets/{s_slug}.html" style="background:#161b26; border:1px solid rgba(255,255,255,0.07); border-radius:14px; padding:12px; text-decoration:none; color:#fff; display:flex; align-items:center; gap:10px;">
-                    <img src="{s_logo}" onerror="this.onerror=function(){{this.src='{app_logo_url}'}};this.src='{s_fmp}';" width="36" height="36" style="border-radius:50%; object-fit:cover;">
+                <a href="https://tradegpt-vector.com/assets/{s_slug}.html" style="background:#171c28; border:1px solid #1e2430; border-radius:6px; padding:10px 12px; text-decoration:none; color:#fff; display:flex; align-items:center; gap:10px;">
+                    <img src="{s_logo}" onerror="this.onerror=function(){{this.src='{app_logo_url}'}};this.src='{s_fmp}';" width="32" height="32" style="border-radius:50%; object-fit:cover;">
                     <div style="overflow:hidden;">
-                        <div style="font-weight:700; font-size:0.9rem;">{s_sym}</div>
-                        <div style="font-size:0.75rem; color:#9ca3af; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{s_name}</div>
+                        <div style="font-weight:600; font-size:0.85rem;">{s_sym}</div>
+                        <div style="font-size:0.72rem; color:#9ca3af; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{s_name}</div>
                     </div>
                 </a>""")
 
             chg_col = "#10b981" if pct_change >= 0 else "#ef4444"
-            chg_arrow = "↑" if pct_change >= 0 else "↓"
             wk_col = "#10b981" if week_change >= 0 else "#ef4444"
-            play_link = f"https://play.google.com/store/apps/details?id=com.vectordev.einsight&referrer=utm_source%3Dwebsite%26utm_medium%3Dasset_page%26utm_campaign%3D{upper_sym}"
             gh_logo = f"https://raw.githubusercontent.com/pammyhouse/dati-finanziari/main/loghi/{upper_sym}_img.png"
             fmp_logo = f"https://financialmodelingprep.com/image-stock/{upper_sym}.png"
 
@@ -2753,229 +2753,276 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{upper_sym} ({full_name}) Live Chart, Price & AI Technical Analysis | TradeGPT</title>
+    <title>{upper_sym} ({full_name}) Live Chart, Price & Quantitative Analysis | TradeGPT</title>
     <link rel="icon" type="image/png" href="{app_logo_url}">
-    <meta name="description" content="Track {full_name} ({upper_sym}) live interactive chart, current price ({format_smart_price(curr_price)}), 52-week range, and volume. Download TradeGPT app to unlock AI signals, RSI, MACD, and Pivot Points.">
+    <meta name="description" content="{full_name} ({upper_sym}) live interactive candlestick chart, current price ({format_smart_price(curr_price)}), 52-week range, and institutional volume data on TradeGPT.">
     <meta name="robots" content="index, follow">
     <link rel="canonical" href="https://tradegpt-vector.com/assets/{slug}.html">
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
     <style>
-        :root {{ --bg:#0b0e14; --card:#131822; --emerald:#10b981; --red:#ef4444; --muted:#9ca3af; }}
+        :root {{ --bg-main:#0b0e14; --bg-card:#12161f; --border:#1e2430; --emerald:#10b981; --red:#ef4444; --text-primary:#f3f4f6; --text-secondary:#9ca3af; --text-muted:#6b7280; }}
         * {{ box-sizing:border-box; }}
-        body {{ background:var(--bg); color:#f3f4f6; font-family:'Outfit',sans-serif; margin:0; padding:0 0 90px 0; overflow-x:hidden; }}
-        .top-bar {{ background:linear-gradient(90deg,#111827,#1f2937); border-bottom:1px solid rgba(255,255,255,0.08); padding:10px 16px; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:1000; }}
-        .btn-green {{ background:var(--emerald); color:#000; font-weight:700; font-size:0.85rem; padding:8px 16px; border-radius:20px; text-decoration:none; }}
-        .shell {{ max-width:840px; margin:0 auto; padding:20px 16px; }}
-        .asset-hdr {{ display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }}
-        .logo-circle {{ width:48px; height:48px; border-radius:50%; object-fit:cover; background:#1f2937; border:1px solid rgba(255,255,255,0.1); }}
-        .price-big {{ font-family:'Space Mono',monospace; font-size:2.5rem; font-weight:700; color:#fff; line-height:1.1; }}
-        .chart-box {{ background:#0d1118; border:1px solid rgba(255,255,255,0.07); border-radius:18px; padding:14px 10px 10px 10px; margin-bottom:16px; position:relative; }}
-        #tvchart {{ width:100%; height:320px; }}
-        .tf-bar {{ display:flex; justify-content:space-between; max-width:380px; margin:12px auto 4px auto; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.1); border-radius:30px; padding:4px; }}
-        .tf-btn {{ background:transparent; border:none; color:var(--muted); font-family:'Space Mono',monospace; font-size:0.82rem; font-weight:700; padding:7px 16px; border-radius:20px; cursor:pointer; }}
-        .tf-btn.active {{ background:var(--emerald); color:#000; }}
-        .pills-3 {{ display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin:16px 0; }}
-        .pill-btn {{ padding:11px 8px; border-radius:24px; font-weight:600; font-size:0.88rem; text-align:center; text-decoration:none; display:flex; align-items:center; justify-content:center; gap:6px; }}
-        .card-section {{ background:var(--card); border:1px solid rgba(255,255,255,0.06); border-radius:16px; padding:18px; margin-bottom:20px; }}
-        .range-row {{ display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; font-family:'Space Mono',monospace; font-size:0.82rem; }}
-        .range-row:last-child {{ margin-bottom:0; }}
-        .range-bar {{ flex:1; margin:0 12px; height:6px; background:#262f40; border-radius:4px; overflow:hidden; }}
-        .range-fill {{ height:100%; background:#38bdf8; border-radius:4px; }}
-        .paywall-box {{ position:relative; background:var(--card); border-radius:18px; padding:26px 20px; border:1px solid rgba(16,185,129,0.4); overflow:hidden; margin-bottom:22px; }}
-        .blur-rows {{ filter:blur(7px); user-select:none; pointer-events:none; opacity:0.4; font-family:'Space Mono',monospace; }}
-        .blur-row {{ display:flex; justify-content:space-between; padding:12px 0; border-bottom:1px solid rgba(255,255,255,0.08); }}
-        .overlay-lock {{ position:absolute; inset:0; background:radial-gradient(circle,rgba(11,14,20,0.72) 0%,rgba(11,14,20,0.95) 100%); display:flex; flex-direction:column; align-items:center; justify-content:center; padding:20px; text-align:center; }}
-        .sticky-btm {{ position:fixed; bottom:0; left:0; right:0; background:rgba(19,24,34,0.96); backdrop-filter:blur(12px); border-top:1px solid rgba(16,185,129,0.4); padding:12px 20px; display:flex; align-items:center; justify-content:space-between; z-index:9999; }}
+        body {{ background:var(--bg-main); color:var(--text-primary); font-family:'Inter',sans-serif; margin:0; padding:0 0 84px 0; overflow-x:hidden; -webkit-font-smoothing:antialiased; }}
+        .site-header {{ background:var(--bg-card); border-bottom:1px solid var(--border); padding:12px 20px; position:sticky; top:0; z-index:1000; }}
+        .header-inner {{ max-width:960px; margin:0 auto; display:flex; align-items:center; justify-content:space-between; }}
+        .brand-link {{ display:flex; align-items:center; gap:10px; text-decoration:none; color:var(--text-primary); }}
+        .brand-link img {{ width:32px; height:32px; border-radius:6px; }}
+        .btn-play-sm {{ display:inline-flex; align-items:center; gap:8px; background:var(--emerald); color:#000; font-weight:600; font-size:0.82rem; padding:6px 14px 6px 8px; border-radius:8px; text-decoration:none; }}
+        .container {{ max-width:960px; margin:0 auto; padding:24px 16px; }}
+        .instrument-header {{ display:flex; justify-content:space-between; align-items:flex-start; padding-bottom:18px; border-bottom:1px solid var(--border); margin-bottom:18px; }}
+        .instrument-id {{ display:flex; align-items:center; gap:14px; }}
+        .instrument-logo {{ width:44px; height:44px; border-radius:50%; object-fit:cover; background:#1a202c; border:1px solid var(--border); }}
+        .quote-price {{ font-family:'Space Mono',monospace; font-size:2.3rem; font-weight:700; color:#fff; line-height:1; }}
+        .quote-stats {{ font-family:'Space Mono',monospace; font-size:0.88rem; margin-top:8px; display:flex; flex-wrap:wrap; align-items:center; gap:14px; }}
+        .chart-panel {{ background:var(--bg-card); border:1px solid var(--border); border-radius:8px; padding:14px; margin-bottom:20px; }}
+        .chart-toolbar {{ display:flex; justify-content:space-between; align-items:center; padding-bottom:10px; margin-bottom:10px; border-bottom:1px solid var(--border); }}
+        .chart-toggle-btn {{ background:#1a202c; border:1px solid var(--border); color:var(--text-primary); width:34px; height:34px; border-radius:6px; display:flex; align-items:center; justify-content:center; cursor:pointer; }}
+        #tvchart {{ width:100%; height:380px; }}
+        .tools-bar {{ display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:20px; }}
+        .tool-btn {{ background:var(--bg-card); border:1px solid var(--border); border-radius:6px; padding:11px 12px; color:var(--text-primary); text-decoration:none; font-size:0.84rem; font-weight:600; display:flex; align-items:center; justify-content:space-between; }}
+        .lock-tag {{ font-size:0.68rem; color:var(--emerald); background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.25); padding:2px 6px; border-radius:4px; font-family:'Space Mono',monospace; }}
+        .panel-box {{ background:var(--bg-card); border:1px solid var(--border); border-radius:8px; padding:20px; margin-bottom:20px; }}
+        .panel-title {{ font-size:0.95rem; font-weight:600; color:#fff; margin:0 0 16px 0; padding-bottom:10px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }}
+        .range-item {{ display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; font-family:'Space Mono',monospace; font-size:0.82rem; }}
+        .range-item:last-child {{ margin-bottom:0; }}
+        .range-lbl {{ font-family:'Inter',sans-serif; color:var(--text-secondary); width:140px; font-size:0.84rem; }}
+        .range-track {{ flex:1; margin:0 16px; height:5px; background:#1e2430; border-radius:3px; overflow:hidden; }}
+        .range-bar-fill {{ height:100%; background:#3b82f6; border-radius:3px; }}
+        .paywall-panel {{ position:relative; background:var(--bg-card); border:1px solid var(--border); border-radius:8px; overflow:hidden; margin-bottom:20px; }}
+        .paywall-table {{ width:100%; border-collapse:collapse; font-size:0.85rem; }}
+        .paywall-table th, .paywall-table td {{ padding:12px 16px; text-align:left; border-bottom:1px solid var(--border); }}
+        .paywall-table th {{ color:var(--text-secondary); font-weight:500; }}
+        .blurred-val {{ filter:blur(6px); user-select:none; font-family:'Space Mono',monospace; color:var(--text-primary); }}
+        .paywall-cta-banner {{ background:linear-gradient(180deg,rgba(18,22,31,0.4) 0%,rgba(18,22,31,0.98) 35%,#12161f 100%); padding:36px 20px 24px 20px; text-align:center; margin-top:-90px; position:relative; z-index:5; }}
+        .btn-google-play {{ display:inline-flex; align-items:center; gap:10px; background:var(--emerald); color:#000; font-weight:700; font-size:0.92rem; padding:10px 22px 10px 12px; border-radius:8px; text-decoration:none; margin-top:12px; }}
+        .sticky-app-footer {{ position:fixed; bottom:0; left:0; right:0; background:#12161f; border-top:1px solid var(--border); padding:12px 20px; z-index:9999; }}
+        .sticky-inner {{ max-width:960px; margin:0 auto; display:flex; align-items:center; justify-content:space-between; gap:12px; }}
+        @media (max-width:640px) {{ .tools-bar {{ grid-template-columns:1fr; }} .quote-price {{ font-size:1.9rem; }} #tvchart {{ height:300px; }} }}
     </style>
 </head>
 <body>
-    <div class="top-bar">
-        <div style="display:flex; align-items:center; gap:10px;">
-            <a href="https://tradegpt-vector.com/" style="display:flex; align-items:center; gap:10px; text-decoration:none; color:#fff;">
-                <img src="{app_logo_url}" onerror="this.onerror=null;this.src='https://tradegpt-vector.com/favicon.svg';" alt="TradeGPT" width="34" height="34" style="border-radius:8px;">
-                <div>
-                    <div style="font-weight:700; font-size:0.9rem;">TradeGPT</div>
-                    <div style="font-size:0.72rem; color:var(--muted);">AI Market Analytics • Free App</div>
-                </div>
+    <header class="site-header">
+        <div class="header-inner">
+            <a href="https://tradegpt-vector.com/" class="brand-link">
+                <img src="{app_logo_url}" onerror="this.onerror=null;this.src='https://tradegpt-vector.com/favicon.svg';" alt="TradeGPT">
+                <span style="font-weight:700; font-size:1rem;">TradeGPT</span>
             </a>
+            <div style="display:flex; align-items:center; gap:16px;">
+                <a href="https://tradegpt-vector.com/assets/" style="color:var(--text-secondary); text-decoration:none; font-size:0.85rem; font-weight:500;">Markets Directory</a>
+                <a href="{play_link}" target="_blank" rel="noopener" class="btn-play-sm">{play_svg} Google Play</a>
+            </div>
         </div>
-        <div style="display:flex; gap:12px; align-items:center;">
-            <a href="https://tradegpt-vector.com/assets/" style="color:#34d399; font-size:0.85rem; text-decoration:none; font-weight:600;">All Assets</a>
-            <a href="{play_link}" target="_blank" rel="noopener" class="btn-green">Open in App</a>
-        </div>
-    </div>
+    </header>
 
-    <div class="shell">
-        <div class="asset-hdr">
-            <div style="display:flex; align-items:center; gap:12px;">
-                <img src="{gh_logo}" onerror="this.onerror=function(){{this.src='{app_logo_url}'}};this.src='{fmp_logo}';" alt="{upper_sym}" class="logo-circle">
+    <div class="container">
+        <div class="instrument-header">
+            <div class="instrument-id">
+                <img src="{gh_logo}" onerror="this.onerror=function(){{this.src='{app_logo_url}'}};this.src='{fmp_logo}';" alt="{upper_sym}" class="instrument-logo">
                 <div>
-                    <h1 style="font-size:1.5rem; font-weight:700; margin:0; line-height:1.1;">{upper_sym}</h1>
-                    <p style="font-size:0.92rem; color:var(--muted); margin:2px 0 0 0;">{full_name} • <span style="color:#60a5fa;">{sector_clean}</span></p>
+                    <h1 style="font-size:1.4rem; font-weight:700; margin:0; color:#fff;">{full_name} ({upper_sym})</h1>
+                    <p style="font-size:0.82rem; color:var(--text-secondary); margin:4px 0 0 0;">{sector_clean} • Quantitative Market Data</p>
                 </div>
             </div>
-            <div style="display:flex; gap:8px; align-items:center;">
-                <a href="{play_link}" target="_blank" style="background:rgba(139,92,246,0.18); border:1px solid rgba(139,92,246,0.45); color:#fff; padding:6px 14px; border-radius:20px; font-size:0.8rem; font-weight:600; text-decoration:none;">🎯 VOTE</a>
-                <button onclick="toggleChartMode()" id="modeBtn" style="background:#1f2937; border:1px solid rgba(255,255,255,0.15); color:#fff; padding:6px 12px; border-radius:10px; cursor:pointer; font-size:0.8rem; font-family:'Space Mono',monospace;">📈 Line</button>
-            </div>
         </div>
 
-        <div style="margin-bottom:18px;">
-            <div class="price-big">{format_smart_price(curr_price)}</div>
-            <div style="font-family:'Space Mono',monospace; font-size:0.92rem; margin-top:6px; display:flex; flex-wrap:wrap; gap:14px; align-items:center;">
-                <span style="color:{chg_col};">{chg_arrow} {abs_change:+.2f} ({pct_change:+.2f}%) <span style="color:#fff;">24h</span></span>
-                <span style="color:{wk_col};">7D: {week_change:+.2f}%</span>
-                <span style="color:var(--muted); font-size:0.82rem;">{status_html}</span>
+        <div style="margin-bottom:20px;">
+            <div class="quote-price">{format_smart_price(curr_price)}</div>
+            <div class="quote-stats">
+                <span style="color:{chg_col};">{abs_change:+.2f} ({pct_change:+.2f}%) 24h</span>
+                <span style="color:var(--border);">|</span>
+                <span style="color:{wk_col};">{week_change:+.2f}% 7D</span>
+                <span style="color:var(--border);">|</span>
+                <span style="color:var(--text-muted); font-size:0.8rem;">{status_html}</span>
             </div>
             {ext_html}
         </div>
 
-        <div class="chart-box">
+        <div class="chart-panel">
+            <div class="chart-toolbar">
+                <span style="font-size:0.8rem; font-weight:600; color:var(--text-secondary); text-transform:uppercase;">{upper_sym} Interactive Historical Chart</span>
+                <button class="chart-toggle-btn" onclick="toggleChartType()" title="Toggle Candlestick / Line Chart" aria-label="Toggle Chart Type">
+                    <svg id="iconLine" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"></polyline><polyline points="16 7 22 7 22 13"></polyline></svg>
+                    <svg id="iconCandle" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;"><line x1="7" y1="3" x2="7" y2="21"></line><rect x="4" y="7" width="6" height="9" rx="1" fill="currentColor"></rect><line x1="17" y1="4" x2="17" y2="20"></line><rect x="14" y="9" width="6" height="7" rx="1"></rect></svg>
+                </button>
+            </div>
             <div id="tvchart"></div>
-            <div class="tf-bar">
-                <button class="tf-btn" onclick="setTf(7, this)">7D</button>
-                <button class="tf-btn" onclick="setTf(30, this)">1M</button>
-                <button class="tf-btn active" onclick="setTf(90, this)">3M</button>
-                <button class="tf-btn" onclick="setTf(180, this)">6M</button>
-                <button class="tf-btn" onclick="setTf(365, this)">1Y</button>
+            <div style="font-size:0.72rem; color:var(--text-muted); margin-top:10px; display:flex; justify-content:space-between;">
+                <span>Market data is provided for informational purposes only.</span>
+                <span>Drag or pinch to inspect historical candles</span>
             </div>
         </div>
 
-        <div style="font-family:'Space Mono',monospace; font-size:0.72rem; color:rgba(255,255,255,0.4); margin-bottom:14px;">
-            Market data is provided for informational purposes only and may be delayed.
+        <div class="tools-bar">
+            <a href="{play_link}" target="_blank" class="tool-btn">
+                <span style="display:flex; align-items:center; gap:8px;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                    Volume & Price Highlights
+                </span>
+                <span class="lock-tag">APP</span>
+            </a>
+            <a href="{play_link}" target="_blank" class="tool-btn">
+                <span style="display:flex; align-items:center; gap:8px;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+                    Fibonacci Pivot Points
+                </span>
+                <span class="lock-tag">APP</span>
+            </a>
+            <a href="{play_link}" target="_blank" class="tool-btn">
+                <span style="display:flex; align-items:center; gap:8px;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a855f7" stroke-width="2"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>
+                    Chart Pattern Detector
+                </span>
+                <span class="lock-tag">APP</span>
+            </a>
         </div>
 
-        <div class="pills-3">
-            <a href="{play_link}" target="_blank" class="pill-btn" style="background:#161b26; border:1px solid rgba(255,255,255,0.15); color:#fff;">⚡ Highlights</a>
-            <a href="{play_link}" target="_blank" class="pill-btn" style="background:linear-gradient(135deg,#f59e0b,#fbbf24); color:#000;">🔶 Pivot Point</a>
-            <a href="{play_link}" target="_blank" class="pill-btn" style="background:linear-gradient(135deg,#38bdf8,#818cf8,#c084fc); color:#000;">🧬 Pattern</a>
-        </div>
-
-        <div class="card-section" style="cursor:pointer;" onclick="toggleDesc()">
-            <p id="compDesc" style="margin:0; font-size:0.94rem; color:rgba(255,255,255,0.8); line-height:1.55; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">
-                {company_desc}
-            </p>
-            <span id="readMoreLbl" style="color:#fff; font-weight:700; font-size:0.85rem; display:inline-block; margin-top:6px;">Read more</span>
-        </div>
-
-        <div class="card-section">
-            <div class="range-row">
-                <span style="color:var(--muted); width:125px; font-family:'Outfit',sans-serif;">Volume (Vs History)</span>
+        <div class="panel-box">
+            <h2 class="panel-title">Market Ranges & Volume</h2>
+            <div class="range-item">
+                <span class="range-lbl">Volume (Vs History)</span>
                 <span>{format_compact_vol(v_min)}</span>
-                <div class="range-bar"><div class="range-fill" style="width:{vol_pct}%;"></div></div>
+                <div class="range-track"><div class="range-bar-fill" style="width:{vol_pct}%;"></div></div>
                 <span>{format_compact_vol(v_max)}</span>
             </div>
-            <div class="range-row">
-                <span style="color:var(--muted); width:125px; font-family:'Outfit',sans-serif;">Daily Range</span>
+            <div class="range-item">
+                <span class="range-lbl">Daily Range</span>
                 <span>{format_smart_price(d_min)}</span>
-                <div class="range-bar"><div class="range-fill" style="width:{day_pct}%;"></div></div>
+                <div class="range-track"><div class="range-bar-fill" style="width:{day_pct}%;"></div></div>
                 <span>{format_smart_price(d_max)}</span>
             </div>
-            <div class="range-row">
-                <span style="color:var(--muted); width:125px; font-family:'Outfit',sans-serif;">52W Range</span>
+            <div class="range-item">
+                <span class="range-lbl">52-Week Range</span>
                 <span>{format_smart_price(h_min)}</span>
-                <div class="range-bar"><div class="range-fill" style="width:{yr_pct}%;"></div></div>
+                <div class="range-track"><div class="range-bar-fill" style="width:{yr_pct}%;"></div></div>
                 <span>{format_smart_price(h_max)}</span>
             </div>
         </div>
 
-        <div class="paywall-box">
-            <div class="blur-rows">
-                <div class="blur-row"><span>AI Sentiment, Volatility & Momentum</span><span style="color:#10b981;">78.4% | 54% | HIGH</span></div>
-                <div class="blur-row"><span>Technical Indicators (RSI, MACD, BB, EMA)</span><span>RSI: XX.X | Bullish</span></div>
-                <div class="blur-row"><span>AI Trading Signal (Stop Loss & Take Profit)</span><span style="color:#10b981;">STRONG BUY</span></div>
-                <div class="blur-row"><span>30-Day Statistical Price Projection</span><span>Avg: XXX.XX | High: XXX.XX</span></div>
-                <div class="blur-row"><span>Executive Insider Sells & Correlations</span><span>Unlocked in App</span></div>
+        <div class="paywall-panel">
+            <div style="padding:16px 20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+                <span style="font-weight:600; font-size:0.95rem; color:#fff;">Quantitative Technical Ratings & AI Signals ({upper_sym})</span>
+                <span style="font-size:0.75rem; color:var(--emerald); font-family:'Space Mono',monospace;">LIVE IN APP</span>
             </div>
-            <div class="overlay-lock">
-                <span style="background:rgba(16,185,129,0.2); color:#34d399; border:1px solid #10b981; padding:4px 12px; border-radius:20px; font-size:0.75rem; font-weight:700;">
-                    🔒 UNLOCK FULL {upper_sym} ANALYSIS IN APP
-                </span>
-                <h2 style="margin:10px 0 6px 0; font-size:1.35rem; color:#fff;">
-                    Check {upper_sym} AI Sentiment, RSI, Signals & Targets
-                </h2>
-                <p style="margin:0 0 14px 0; color:var(--muted); max-width:460px; font-size:0.9rem;">
-                    Sentiment gauges, technical ratings, pivot points, and AI price projections for <b>{full_name}</b> are available inside the free <b>TradeGPT</b> Android app.
+            <table class="paywall-table">
+                <thead>
+                    <tr><th>Metric / Indicator</th><th>Value</th><th>Signal</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>AI Hybrid Probability Score</td><td class="blurred-val">84.6%</td><td class="blurred-val" style="color:var(--emerald);">STRONG BUY</td></tr>
+                    <tr><td>RSI (14) & Stochastic %K</td><td class="blurred-val">62.4 / 71.2</td><td class="blurred-val">Bullish</td></tr>
+                    <tr><td>MACD (12, 26, 9) & EMA (10)</td><td class="blurred-val">+2.45 / 308.10</td><td class="blurred-val">Buy</td></tr>
+                    <tr><td>AI News Sentiment & Momentum</td><td class="blurred-val">76.0 / 100</td><td class="blurred-val">Positive</td></tr>
+                    <tr><td>30-Day Statistical Target Range</td><td class="blurred-val">295.00 - 348.50</td><td class="blurred-val">High Confidence</td></tr>
+                </tbody>
+            </table>
+            <div class="paywall-cta-banner">
+                <h3 style="margin:0 0 6px 0; font-size:1.15rem; color:#fff;">Access Full {upper_sym} Technical Indicators & AI Forecasts</h3>
+                <p style="margin:0 auto; color:var(--text-secondary); max-width:520px; font-size:0.86rem; line-height:1.5;">
+                    Real-time RSI, MACD, Bollinger Bands, sentiment gauges, executive insider trades, and 30-day price projections for <b>{full_name}</b> are available free on the <b>TradeGPT</b> Android app.
                 </p>
-                <a href="{play_link}" target="_blank" rel="noopener" class="btn-green" style="padding:13px 26px; font-size:1rem; border-radius:28px; box-shadow:0 6px 20px rgba(16,185,129,0.4);">
-                    📲 Download TradeGPT App (Free)
+                <a href="{play_link}" target="_blank" rel="noopener" class="btn-google-play">
+                    {play_svg} Download on Google Play
                 </a>
             </div>
         </div>
 
+        <div class="panel-box" style="cursor:pointer;" onclick="toggleProfile()">
+            <h2 class="panel-title">About {full_name} ({upper_sym})</h2>
+            <p id="profileText" style="margin:0; font-size:0.88rem; color:var(--text-secondary); line-height:1.6; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">
+                {company_desc}
+            </p>
+            <span id="profileMore" style="color:var(--emerald); font-size:0.82rem; font-weight:600; display:inline-block; margin-top:8px;">Read more</span>
+        </div>
+
         {news_cards_html}
 
-        <div class="card-section">
-            <h2 style="font-size:1.15rem; margin:0 0 12px 0; color:#fff;">👀 People Also Watch</h2>
-            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px;">
+        <div class="panel-box">
+            <h2 class="panel-title">Related Instruments</h2>
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:10px;">
                 {''.join(similar_html_list)}
             </div>
         </div>
     </div>
 
-    <div class="sticky-btm">
-        <div>
-            <div style="font-weight:700; font-size:0.92rem; color:#fff;">Get {upper_sym} AI Signals & Alerts</div>
-            <div style="font-size:0.75rem; color:#34d399;">Free on Google Play • TradeGPT</div>
+    <div class="sticky-app-footer">
+        <div class="sticky-inner">
+            <div>
+                <div style="font-weight:600; font-size:0.9rem; color:#fff;">TradeGPT Financial Analysis</div>
+                <div style="font-size:0.76rem; color:var(--text-secondary);">Unlock RSI, MACD, Pivot Points & AI Forecasts for {upper_sym}</div>
+            </div>
+            <a href="{play_link}" target="_blank" rel="noopener" class="btn-play-sm" style="padding:7px 16px 7px 8px; font-size:0.85rem;">
+                {play_svg} Google Play
+            </a>
         </div>
-        <a href="{play_link}" target="_blank" rel="noopener" class="btn-green">Open App</a>
     </div>
 
     <script>
         const rawData = {chart_json_str};
-        let isCandle = true;
-        let currentDays = 90;
-
         const container = document.getElementById('tvchart');
+        const totalBars = rawData.length;
+        const calcMinSpacing = Math.max(1.5, container.clientWidth / Math.max(totalBars, 1));
+
         const chart = LightweightCharts.createChart(container, {{
-            layout: {{ background: {{ type: 'solid', color: '#0d1118' }}, textColor: '#9ca3af' }},
-            grid: {{ vertLines: {{ color: 'rgba(255,255,255,0.03)' }}, horzLines: {{ color: 'rgba(255,255,255,0.05)' }} }},
-            rightPriceScale: {{ borderColor: 'rgba(255,255,255,0.1)' }},
-            timeScale: {{ borderColor: 'rgba(255,255,255,0.1)' }}
+            layout: {{ background: {{ type: 'solid', color: '#12161f' }}, textColor: '#9ca3af', fontFamily: 'Space Mono, monospace', fontSize: 11 }},
+            grid: {{ vertLines: {{ color: '#1e2430' }}, horzLines: {{ color: '#1e2430' }} }},
+            rightPriceScale: {{ borderColor: '#1e2430' }},
+            timeScale: {{
+                borderColor: '#1e2430',
+                fixLeftEdge: true,
+                fixRightEdge: true,
+                minBarSpacing: calcMinSpacing
+            }},
+            handleScroll: {{ mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false }},
+            handleScale: {{ axisPressedMouseMove: true, mouseWheel: true, pinch: true }}
         }});
 
-        let candleSeries = chart.addCandlestickSeries({{
+        const candleSeries = chart.addCandlestickSeries({{
             upColor: '#10b981', downColor: '#ef4444',
             borderUpColor: '#10b981', borderDownColor: '#ef4444',
             wickUpColor: '#10b981', wickDownColor: '#ef4444'
         }});
 
-        let areaSeries = chart.addAreaSeries({{
-            lineColor: '#10b981', topColor: 'rgba(16,185,129,0.35)', bottomColor: 'rgba(16,185,129,0.0)', lineWidth: 2, visible: false
+        const areaSeries = chart.addAreaSeries({{
+            lineColor: '#10b981',
+            topColor: 'rgba(16, 185, 129, 0.25)',
+            bottomColor: 'rgba(16, 185, 129, 0.0)',
+            lineWidth: 2,
+            visible: false
         }});
 
-        function renderData() {{
-            const sliced = rawData.slice(-currentDays);
-            candleSeries.setData(sliced);
-            areaSeries.setData(sliced.map(d => ({{ time: d.time, value: d.close }})));
+        candleSeries.setData(rawData);
+        areaSeries.setData(rawData.map(item => ({{ time: item.time, value: item.close }})));
+
+        if (totalBars > 90) {{
+            chart.timeScale().setVisibleLogicalRange({{ from: totalBars - 90, to: totalBars - 1 }});
+        }} else {{
             chart.timeScale().fitContent();
         }}
 
-        function setTf(days, btn) {{
-            currentDays = days;
-            document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            renderData();
+        let isCandleMode = true;
+        function toggleChartType() {{
+            isCandleMode = !isCandleMode;
+            candleSeries.applyOptions({{ visible: isCandleMode }});
+            areaSeries.applyOptions({{ visible: !isCandleMode }});
+            document.getElementById('iconLine').style.display = isCandleMode ? 'block' : 'none';
+            document.getElementById('iconCandle').style.display = isCandleMode ? 'none' : 'block';
         }}
 
-        function toggleChartMode() {{
-            isCandle = !isCandle;
-            candleSeries.applyOptions({{ visible: isCandle }});
-            areaSeries.applyOptions({{ visible: !isCandle }});
-            document.getElementById('modeBtn').innerText = isCandle ? '📈 Line' : '🕯️ Candles';
+        let profExp = false;
+        function toggleProfile() {{
+            profExp = !profExp;
+            document.getElementById('profileText').style.webkitLineClamp = profExp ? 'unset' : '2';
+            document.getElementById('profileMore').innerText = profExp ? 'Show less' : 'Read more';
         }}
 
-        let descExp = false;
-        function toggleDesc() {{
-            descExp = !descExp;
-            const p = document.getElementById('compDesc');
-            p.style.webkitLineClamp = descExp ? 'unset' : '2';
-            document.getElementById('readMoreLbl').innerText = descExp ? 'Show less' : 'Read more';
-        }}
-
-        renderData();
-        window.addEventListener('resize', () => chart.applyOptions({{ width: container.clientWidth }}));
+        window.addEventListener('resize', () => {{
+            const newMinSpacing = Math.max(1.5, container.clientWidth / Math.max(totalBars, 1));
+            chart.applyOptions({{
+                width: container.clientWidth,
+                timeScale: {{ minBarSpacing: newMinSpacing }}
+            }});
+        }});
     </script>
 </body>
 </html>"""
@@ -2998,14 +3045,13 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
             c_col = "#10b981" if ch >= 0 else "#ef4444"
             gh_l = f"https://raw.githubusercontent.com/pammyhouse/dati-finanziari/main/loghi/{sym}_img.png"
             fmp_l = f"https://financialmodelingprep.com/image-stock/{sym}.png"
-            cards.append(f"<a href='https://tradegpt-vector.com/assets/{sl}.html' style='background:#131822; padding:12px; border-radius:12px; color:#fff; text-decoration:none; border:1px solid rgba(255,255,255,0.07); display:flex; align-items:center; justify-content:space-between;'><div style='display:flex; align-items:center; gap:10px;'><img src='{gh_l}' onerror=\"this.onerror=function(){{this.src='{app_logo_url}'}};this.src='{fmp_l}';\" width='32' height='32' style='border-radius:50%; object-fit:cover;'><div><b>{sym}</b><br><small style='color:#9ca3af;'>{fn}</small></div></div><span style='color:{c_col}; font-family:monospace;'>{ch:+.2f}%</span></a>")
-        sec_html.append(f"<h2 style='color:#34d399; margin-top:28px;'>{sec}</h2><div style='display:grid; grid-template-columns:repeat(auto-fill, minmax(250px,1fr)); gap:10px;'>{''.join(cards)}</div>")
+            cards.append(f"<a href='https://tradegpt-vector.com/assets/{sl}.html' style='background:#12161f; padding:12px; border-radius:6px; color:#fff; text-decoration:none; border:1px solid #1e2430; display:flex; align-items:center; justify-content:space-between;'><div style='display:flex; align-items:center; gap:10px;'><img src='{gh_l}' onerror=\"this.onerror=function(){{this.src='{app_logo_url}'}};this.src='{fmp_l}';\" width='32' height='32' style='border-radius:50%; object-fit:cover;'><div><b>{sym}</b><br><small style='color:#9ca3af;'>{fn}</small></div></div><span style='color:{c_col}; font-family:monospace;'>{ch:+.2f}%</span></a>")
+        sec_html.append(f"<h2 style='color:#f3f4f6; font-size:1.1rem; margin-top:28px; border-bottom:1px solid #1e2430; padding-bottom:8px;'>{sec}</h2><div style='display:grid; grid-template-columns:repeat(auto-fill, minmax(250px,1fr)); gap:10px;'>{''.join(cards)}</div>")
 
-    index_assets_html = f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>All 200+ Covered Assets - Live Charts & AI Analysis | TradeGPT</title><link rel="icon" type="image/png" href="{app_logo_url}"><link rel="canonical" href="https://tradegpt-vector.com/assets/"><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700&display=swap" rel="stylesheet"></head><body style="background:#0b0e14; color:#fff; font-family:'Outfit',sans-serif; padding:25px; max-width:1080px; margin:0 auto;"><a href="https://tradegpt-vector.com/" style="color:#34d399; text-decoration:none; font-weight:600; display:inline-flex; align-items:center; gap:8px;"><img src="{app_logo_url}" width="28" height="28" style="border-radius:6px;"> ← Back to TradeGPT Home</a><h1 style="margin-top:15px;">TradeGPT Market Directory</h1><p style="color:#9ca3af;">Select any asset to view live interactive candlestick/line charts, 52W ranges, and unlock AI forecasts in the app.</p>{''.join(sec_html)}</body></html>"""
+    index_assets_html = f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>All 200+ Covered Financial Assets - Live Charts & Quantitative Data | TradeGPT</title><link rel="icon" type="image/png" href="{app_logo_url}"><link rel="canonical" href="https://tradegpt-vector.com/assets/"><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet"></head><body style="background:#0b0e14; color:#fff; font-family:'Inter',sans-serif; padding:25px; max-width:1080px; margin:0 auto;"><a href="https://tradegpt-vector.com/" style="color:#10b981; text-decoration:none; font-weight:600; display:inline-flex; align-items:center; gap:8px;"><img src="{app_logo_url}" width="26" height="26" style="border-radius:6px;"> ← Back to TradeGPT Home</a><h1 style="margin-top:15px; font-size:1.6rem;">TradeGPT Global Markets Directory</h1><p style="color:#9ca3af; font-size:0.9rem;">Select any financial instrument below to inspect interactive historical charts, 52-week ranges, and unlock AI forecasts in the app.</p>{''.join(sec_html)}</body></html>"""
     r2_manager.write_file(f"{seo_folder}/index.html", index_assets_html, is_json=False)
 
     sitemap_xml = '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' + "\n".join(sitemap_urls) + "\n</urlset>"
-    # Salvataggio diretto con ContentType application/xml per Google Search Console
     r2_manager.s3.put_object(
         Bucket=r2_manager.bucket_name,
         Key="public_seo/sitemap_assets.xml",
@@ -3013,7 +3059,7 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
         ContentType='application/xml; charset=utf-8',
         CacheControl='max-age=3600'
     )
-    print("Pagine SEO e sitemap_assets.xml salvate su R2 con Content-Type XML!")
+    print("Pagine SEO professionali e sitemap_assets.xml salvate su R2!")
 
 generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, news_by_symbol)
 
