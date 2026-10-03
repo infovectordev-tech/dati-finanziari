@@ -2566,4 +2566,469 @@ update_data = {
 }
 r2_manager.write_file(f"{TARGET_FOLDER}/last_update.json", update_data, is_json=True)
 
+
+
+# ==============================================================================
+# 9. GENERATORE PROGRAMMATIC SEO STILE INVESTING.COM / APP UI (ZERO SPOILER)
+# ==============================================================================
+def clean_slug(symbol):
+    return re.sub(r'[^a-z0-9]+', '-', symbol.lower()).strip('-')
+
+def format_compact_vol(val):
+    try:
+        v = float(val)
+        if v >= 1_000_000_000: return f"{v/1e9:.1f}B"
+        if v >= 1_000_000: return f"{v/1e6:.1f}M"
+        if v >= 1_000: return f"{v/1e3:.1f}K"
+        return f"{v:.0f}"
+    except:
+        return "0"
+
+def format_smart_price(val):
+    try:
+        v = float(val)
+        if v >= 1000: return f"{v:,.2f}"
+        if v >= 1: return f"{v:.2f}"
+        if v >= 0.01: return f"{v:.4f}"
+        return f"{v:.6f}"
+    except:
+        return "0.00"
+
+def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, news_by_symbol):
+    print("Avvio generazione 260+ pagine SEO stile App TradeGPT...")
+    seo_folder = "public_seo/assets"
+    today_iso = datetime.utcnow().strftime("%Y-%m-%d")
+    
+    # Leggiamo prezzi.json da R2 per avere anche Pre/Post Market e stato mercato
+    prezzi_live_root = r2_manager.read_json("prezzi.json")
+    prezzi_live_map = prezzi_live_root.get("data", {}) if isinstance(prezzi_live_root, dict) else {}
+
+    sitemap_urls = [
+        f"""  <url>
+    <loc>https://tradegpt-vector.com/assets/</loc>
+    <lastmod>{today_iso}</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.9</priority>
+  </url>"""
+    ]
+    
+    directory_by_sector = defaultdict(list)
+    all_valid_syms = [s for s in dati_storici_all.keys() if dati_storici_all[s] is not None and len(dati_storici_all[s]) >= 10]
+
+    for sym in all_valid_syms:
+        try:
+            df = dati_storici_all[sym]
+            slug = clean_slug(sym)
+            upper_sym = sym.upper()
+            full_name = symbol_name_map.get(sym, [sym])[0]
+            sector_raw = asset_sector_map.get(sym, "Global Markets")
+            sector_clean = re.sub(r'^\d+\.\s*', '', sector_raw)
+
+            # 1. Recupera descrizione da GitHub (come getInfo() in HeartActivity)
+            company_desc = f"{full_name} ({upper_sym}) is tracked in real time by TradeGPT quantitative algorithms across {sector_clean}."
+            try:
+                gh_info_url = f"https://raw.githubusercontent.com/pammyhouse/dati-finanziari/main/{upper_sym}.html"
+                r_info = requests.get(gh_info_url, timeout=3)
+                if r_info.status_code == 200:
+                    m_p = re.search(r'<p>(.*?)</p>', r_info.text, re.DOTALL | re.IGNORECASE)
+                    if m_p:
+                        clean_d = re.sub(r'<[^>]+>', '', m_p.group(1)).strip()
+                        if len(clean_d) > 20:
+                            company_desc = clean_d
+            except:
+                pass
+
+            # 2. Serie storiche OHLCV (ultimi 365 giorni per grafico interattivo)
+            close_s = df['Close'].iloc[:, 0] if isinstance(df['Close'], pd.DataFrame) else df['Close']
+            high_s = df['High'].iloc[:, 0] if isinstance(df['High'], pd.DataFrame) else df['High']
+            low_s = df['Low'].iloc[:, 0] if isinstance(df['Low'], pd.DataFrame) else df['Low']
+            open_s = df['Open'].iloc[:, 0] if isinstance(df['Open'], pd.DataFrame) else df['Open']
+            vol_s = df['Volume'].iloc[:, 0] if isinstance(df['Volume'], pd.DataFrame) else df['Volume']
+
+            curr_price = float(close_s.iloc[-1])
+            prev_price = float(close_s.iloc[-2]) if len(close_s) >= 2 else curr_price
+
+            # Sovrascrivi con prezzi.json se disponibile
+            live_obj = prezzi_live_map.get(sym, {})
+            if live_obj and "price" in live_obj:
+                curr_price = float(live_obj["price"])
+                prev_price = float(live_obj.get("prevClose", prev_price))
+
+            abs_change = curr_price - prev_price
+            pct_change = ((abs_change / prev_price) * 100.0) if prev_price else 0.0
+            week_change = crescita_settimanale.get(sym, 0.0)
+
+            is_open = live_obj.get("isOpen", False)
+            status_html = "Market Open ☀️" if is_open else "At close 🌙"
+            
+            ext_html = ""
+            if not is_open:
+                if live_obj.get("postMarketPrice") and live_obj.get("postMarketChangePct") is not None:
+                    ep = float(live_obj["postMarketPrice"])
+                    ec = float(live_obj["postMarketChangePct"])
+                    ecol = "#10b981" if ec >= 0 else "#ef4444"
+                    ext_html = f"<div style='font-family:\"Space Mono\",monospace; font-size:0.88rem; margin-top:4px;'>Post-market <span style='color:{ecol};'>{format_smart_price(ep)} ({ec:+.2f}%)</span></div>"
+                elif live_obj.get("preMarketPrice") and live_obj.get("preMarketChangePct") is not None:
+                    ep = float(live_obj["preMarketPrice"])
+                    ec = float(live_obj["preMarketChangePct"])
+                    ecol = "#10b981" if ec >= 0 else "#ef4444"
+                    ext_html = f"<div style='font-family:\"Space Mono\",monospace; font-size:0.88rem; margin-top:4px;'>Pre-market <span style='color:{ecol};'>{format_smart_price(ep)} ({ec:+.2f}%)</span></div>"
+
+            # 3. Calcolo Market Ranges (Identico a MarketRangesManager in HeartActivity)
+            d_min = float(low_s.iloc[-1])
+            d_max = float(high_s.iloc[-1])
+            day_pct = int(max(5, min(95, ((curr_price - d_min) / (d_max - d_min) * 100)))) if d_max > d_min else 50
+
+            h_min = float(low_s.tail(252).min())
+            h_max = float(high_s.tail(252).max())
+            yr_pct = int(max(5, min(95, ((curr_price - h_min) / (h_max - h_min) * 100)))) if h_max > h_min else 50
+
+            valid_vols = sorted([float(v) for v in vol_s.tail(252).dropna() if v > 0])
+            curr_vol = float(vol_s.iloc[-1]) if pd.notna(vol_s.iloc[-1]) else 0.0
+            if valid_vols:
+                v_min = valid_vols[int(len(valid_vols) * 0.05)]
+                v_max = valid_vols[-1]
+                vol_pct = int(max(5, min(95, ((curr_vol - v_min) / (v_max - v_min) * 100)))) if v_max > v_min else 50
+            else:
+                v_min, v_max, vol_pct = 0.0, 0.0, 0
+
+            # 4. JSON Grafico ultimi 365 giorni per Lightweight Charts
+            chart_records = []
+            tail_df = df.tail(365)
+            for idx, r in tail_df.iterrows():
+                d_str = idx.strftime('%Y-%m-%d') if hasattr(idx, 'strftime') else str(idx)[:10]
+                o_v = float(r['Open'].iloc[0]) if isinstance(r['Open'], pd.Series) else float(r['Open'])
+                h_v = float(r['High'].iloc[0]) if isinstance(r['High'], pd.Series) else float(r['High'])
+                l_v = float(r['Low'].iloc[0]) if isinstance(r['Low'], pd.Series) else float(r['Low'])
+                c_v = float(r['Close'].iloc[0]) if isinstance(r['Close'], pd.Series) else float(r['Close'])
+                chart_records.append({"time": d_str, "open": round(o_v, 4), "high": round(h_v, 4), "low": round(l_v, 4), "close": round(c_v, 4)})
+            chart_json_str = json.dumps(chart_records)
+
+            # 5. News Headlines (Solo titolo e fonte, Sentiment oscurato!)
+            raw_news = news_by_symbol.get(sym, [])[:4]
+            news_cards_html = ""
+            if raw_news:
+                n_items = []
+                for n_title, _, _, n_src, _, n_date in raw_news:
+                    d_fmt = n_date.strftime("%b %d") if hasattr(n_date, 'strftime') else ""
+                    n_items.append(f"""
+                    <div style="padding:12px 0; border-bottom:1px solid rgba(255,255,255,0.06); display:flex; justify-content:space-between; align-items:center; gap:12px;">
+                        <div>
+                            <div style="font-size:0.92rem; color:#fff; font-weight:500;">{n_title}</div>
+                            <div style="font-size:0.75rem; color:#9ca3af; margin-top:3px;">{n_src} • {d_fmt}</div>
+                        </div>
+                        <a href="https://play.google.com/store/apps/details?id=com.vectordev.einsight&referrer=utm_source%3Dwebsite%26utm_medium%3Dnews_sentiment%26utm_campaign%3D{upper_sym}" target="_blank" style="background:rgba(16,185,129,0.15); border:1px solid rgba(16,185,129,0.4); color:#34d399; padding:5px 10px; border-radius:12px; font-size:0.75rem; font-family:'Space Mono',monospace; text-decoration:none; white-space:nowrap;">
+                            🔒 Sentiment %
+                        </a>
+                    </div>""")
+                news_cards_html = f"""
+                <div class="card-section">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                        <h2 style="font-size:1.15rem; margin:0; color:#fff;">📰 Latest {upper_sym} News</h2>
+                        <span style="font-size:0.75rem; color:#34d399;">AI Sentiment Score in App</span>
+                    </div>
+                    {''.join(n_items)}
+                </div>"""
+
+            # 6. People Also Watch (5 asset simili per internal linking SEO)
+            other_syms = [s for s in all_valid_syms if s != sym]
+            similar_sample = random.sample(other_syms, min(5, len(other_syms)))
+            similar_html_list = []
+            for s_sym in similar_sample:
+                s_slug = clean_slug(s_sym)
+                s_name = symbol_name_map.get(s_sym, [s_sym])[0]
+                s_logo = f"https://raw.githubusercontent.com/pammyhouse/dati-finanziari/main/loghi/{s_sym.upper()}_img.png"
+                s_fmp = f"https://financialmodelingprep.com/image-stock/{s_sym.upper()}.png"
+                similar_html_list.append(f"""
+                <a href="/assets/{s_slug}.html" style="background:#161b26; border:1px solid rgba(255,255,255,0.07); border-radius:14px; padding:12px; text-decoration:none; color:#fff; display:flex; align-items:center; gap:10px;">
+                    <img src="{s_logo}" onerror="this.onerror=function(){{this.src='https://tradegpt-vector.com/tradeGPT_glass_logo.webp'}};this.src='{s_fmp}';" width="36" height="36" style="border-radius:50%; object-fit:cover;">
+                    <div style="overflow:hidden;">
+                        <div style="font-weight:700; font-size:0.9rem;">{s_sym}</div>
+                        <div style="font-size:0.75rem; color:#9ca3af; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{s_name}</div>
+                    </div>
+                </a>""")
+
+            # Colori variazione
+            chg_col = "#10b981" if pct_change >= 0 else "#ef4444"
+            chg_arrow = "↑" if pct_change >= 0 else "↓"
+            wk_col = "#10b981" if week_change >= 0 else "#ef4444"
+            play_link = f"https://play.google.com/store/apps/details?id=com.vectordev.einsight&referrer=utm_source%3Dwebsite%26utm_medium%3Dasset_page%26utm_campaign%3D{upper_sym}"
+            gh_logo = f"https://raw.githubusercontent.com/pammyhouse/dati-finanziari/main/loghi/{upper_sym}_img.png"
+            fmp_logo = f"https://financialmodelingprep.com/image-stock/{upper_sym}.png"
+
+            html_page = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{upper_sym} ({full_name}) Live Chart, Price & AI Technical Analysis | TradeGPT</title>
+    <link rel="icon" type="image/webp" href="https://tradegpt-vector.com/tradeGPT_glass_logo.webp">
+    <meta name="description" content="Track {full_name} ({upper_sym}) live interactive chart, current price ({format_smart_price(curr_price)}), 52-week range, and volume. Download TradeGPT app to unlock AI signals, RSI, MACD, and Pivot Points.">
+    <meta name="robots" content="index, follow">
+    <link rel="canonical" href="https://tradegpt-vector.com/assets/{slug}.html">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        :root {{ --bg:#0b0e14; --card:#131822; --emerald:#10b981; --red:#ef4444; --muted:#9ca3af; }}
+        * {{ box-sizing:border-box; }}
+        body {{ background:var(--bg); color:#f3f4f6; font-family:'Outfit',sans-serif; margin:0; padding:0 0 90px 0; overflow-x:hidden; }}
+        .top-bar {{ background:linear-gradient(90deg,#111827,#1f2937); border-bottom:1px solid rgba(255,255,255,0.08); padding:10px 16px; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:1000; }}
+        .btn-green {{ background:var(--emerald); color:#000; font-weight:700; font-size:0.85rem; padding:8px 16px; border-radius:20px; text-decoration:none; }}
+        .shell {{ max-width:840px; margin:0 auto; padding:20px 16px; }}
+        .asset-hdr {{ display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }}
+        .logo-circle {{ width:48px; height:48px; border-radius:50%; object-fit:cover; background:#1f2937; border:1px solid rgba(255,255,255,0.1); }}
+        .price-big {{ font-family:'Space Mono',monospace; font-size:2.5rem; font-weight:700; color:#fff; line-height:1.1; }}
+        .chart-box {{ background:#0d1118; border:1px solid rgba(255,255,255,0.07); border-radius:18px; padding:14px 10px 10px 10px; margin-bottom:16px; position:relative; }}
+        #tvchart {{ width:100%; height:320px; }}
+        .tf-bar {{ display:flex; justify-content:space-between; max-width:380px; margin:12px auto 4px auto; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.1); border-radius:30px; padding:4px; }}
+        .tf-btn {{ background:transparent; border:none; color:var(--muted); font-family:'Space Mono',monospace; font-size:0.82rem; font-weight:700; padding:7px 16px; border-radius:20px; cursor:pointer; }}
+        .tf-btn.active {{ background:var(--emerald); color:#000; }}
+        .pills-3 {{ display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin:16px 0; }}
+        .pill-btn {{ padding:11px 8px; border-radius:24px; font-weight:600; font-size:0.88rem; text-align:center; text-decoration:none; display:flex; align-items:center; justify-content:center; gap:6px; }}
+        .card-section {{ background:var(--card); border:1px solid rgba(255,255,255,0.06); border-radius:16px; padding:18px; margin-bottom:20px; }}
+        .range-row {{ display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; font-family:'Space Mono',monospace; font-size:0.82rem; }}
+        .range-row:last-child {{ margin-bottom:0; }}
+        .range-bar {{ flex:1; margin:0 12px; height:6px; background:#262f40; border-radius:4px; overflow:hidden; }}
+        .range-fill {{ height:100%; background:#38bdf8; border-radius:4px; }}
+        .paywall-box {{ position:relative; background:var(--card); border-radius:18px; padding:26px 20px; border:1px solid rgba(16,185,129,0.4); overflow:hidden; margin-bottom:22px; }}
+        .blur-rows {{ filter:blur(7px); user-select:none; pointer-events:none; opacity:0.4; font-family:'Space Mono',monospace; }}
+        .blur-row {{ display:flex; justify-content:space-between; padding:12px 0; border-bottom:1px solid rgba(255,255,255,0.08); }}
+        .overlay-lock {{ position:absolute; inset:0; background:radial-gradient(circle,rgba(11,14,20,0.72) 0%,rgba(11,14,20,0.95) 100%); display:flex; flex-direction:column; align-items:center; justify-content:center; padding:20px; text-align:center; }}
+        .sticky-btm {{ position:fixed; bottom:0; left:0; right:0; background:rgba(19,24,34,0.96); backdrop-filter:blur(12px); border-top:1px solid rgba(16,185,129,0.4); padding:12px 20px; display:flex; align-items:center; justify-content:space-between; z-index:9999; }}
+    </style>
+</head>
+<body>
+    <div class="top-bar">
+        <div style="display:flex; align-items:center; gap:10px;">
+            <a href="https://tradegpt-vector.com/" style="display:flex; align-items:center; gap:10px; text-decoration:none; color:#fff;">
+                <img src="https://tradegpt-vector.com/tradeGPT_glass_logo.webp" alt="TradeGPT" width="34" height="34" style="border-radius:8px;">
+                <div>
+                    <div style="font-weight:700; font-size:0.9rem;">TradeGPT</div>
+                    <div style="font-size:0.72rem; color:var(--muted);">AI Market Analytics • Free App</div>
+                </div>
+            </a>
+        </div>
+        <div style="display:flex; gap:12px; align-items:center;">
+            <a href="/assets/" style="color:#34d399; font-size:0.85rem; text-decoration:none; font-weight:600;">All Assets</a>
+            <a href="{play_link}" target="_blank" rel="noopener" class="btn-green">Open in App</a>
+        </div>
+    </div>
+
+    <div class="shell">
+        <!-- HEADER CON LOGO GITHUB + FALLBACK FMP -->
+        <div class="asset-hdr">
+            <div style="display:flex; align-items:center; gap:12px;">
+                <img src="{gh_logo}" onerror="this.onerror=function(){{this.src='https://tradegpt-vector.com/tradeGPT_glass_logo.webp'}};this.src='{fmp_logo}';" alt="{upper_sym}" class="logo-circle">
+                <div>
+                    <h1 style="font-size:1.5rem; font-weight:700; margin:0; line-height:1.1;">{upper_sym}</h1>
+                    <p style="font-size:0.92rem; color:var(--muted); margin:2px 0 0 0;">{full_name} • <span style="color:#60a5fa;">{sector_clean}</span></p>
+                </div>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center;">
+                <a href="{play_link}" target="_blank" style="background:rgba(139,92,246,0.18); border:1px solid rgba(139,92,246,0.45); color:#fff; padding:6px 14px; border-radius:20px; font-size:0.8rem; font-weight:600; text-decoration:none;">🎯 VOTE</a>
+                <button onclick="toggleChartMode()" id="modeBtn" style="background:#1f2937; border:1px solid rgba(255,255,255,0.15); color:#fff; padding:6px 12px; border-radius:10px; cursor:pointer; font-size:0.8rem; font-family:'Space Mono',monospace;">🕯️ Candles</button>
+            </div>
+        </div>
+
+        <!-- PREZZO + VARIAZIONE 24H + VARIAZIONE 7D -->
+        <div style="margin-bottom:18px;">
+            <div class="price-big">{format_smart_price(curr_price)}</div>
+            <div style="font-family:'Space Mono',monospace; font-size:0.92rem; margin-top:6px; display:flex; flex-wrap:wrap; gap:14px; align-items:center;">
+                <span style="color:{chg_col};">{chg_arrow} {abs_change:+.2f} ({pct_change:+.2f}%) <span style="color:#fff;">24h</span></span>
+                <span style="color:{wk_col};">7D: {week_change:+.2f}%</span>
+                <span style="color:var(--muted); font-size:0.82rem;">{status_html}</span>
+            </div>
+            {ext_html}
+        </div>
+
+        <!-- GRAFICO INTERATTIVO (7D, 1M, 3M, 6M, 1Y) -->
+        <div class="chart-box">
+            <div id="tvchart"></div>
+            <div class="tf-bar">
+                <button class="tf-btn" onclick="setTf(7, this)">7D</button>
+                <button class="tf-btn" onclick="setTf(30, this)">1M</button>
+                <button class="tf-btn active" onclick="setTf(90, this)">3M</button>
+                <button class="tf-btn" onclick="setTf(180, this)">6M</button>
+                <button class="tf-btn" onclick="setTf(365, this)">1Y</button>
+            </div>
+        </div>
+
+        <div style="font-family:'Space Mono',monospace; font-size:0.72rem; color:rgba(255,255,255,0.4); margin-bottom:14px;">
+            Market data is provided for informational purposes only and may be delayed.
+        </div>
+
+        <!-- 3 BOTTONI AZIONE (RIMANDANO ALL'APP) -->
+        <div class="pills-3">
+            <a href="{play_link}" target="_blank" class="pill-btn" style="background:#161b26; border:1px solid rgba(255,255,255,0.15); color:#fff;">⚡ Highlights</a>
+            <a href="{play_link}" target="_blank" class="pill-btn" style="background:linear-gradient(135deg,#f59e0b,#fbbf24); color:#000;">🔶 Pivot Point</a>
+            <a href="{play_link}" target="_blank" class="pill-btn" style="background:linear-gradient(135deg,#38bdf8,#818cf8,#c084fc); color:#000;">🧬 Pattern</a>
+        </div>
+
+        <!-- DESCRIZIONE AZIENDALE (CON READ MORE COME IN APP) -->
+        <div class="card-section" style="cursor:pointer;" onclick="toggleDesc()">
+            <p id="compDesc" style="margin:0; font-size:0.94rem; color:rgba(255,255,255,0.8); line-height:1.55; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">
+                {company_desc}
+            </p>
+            <span id="readMoreLbl" style="color:#fff; font-weight:700; font-size:0.85rem; display:inline-block; margin-top:6px;">Read more</span>
+        </div>
+
+        <!-- MARKET RANGES (VOLUME, DAILY RANGE, 52W RANGE) -->
+        <div class="card-section">
+            <div class="range-row">
+                <span style="color:var(--muted); width:125px; font-family:'Outfit',sans-serif;">Volume (Vs History)</span>
+                <span>{format_compact_vol(v_min)}</span>
+                <div class="range-bar"><div class="range-fill" style="width:{vol_pct}%;"></div></div>
+                <span>{format_compact_vol(v_max)}</span>
+            </div>
+            <div class="range-row">
+                <span style="color:var(--muted); width:125px; font-family:'Outfit',sans-serif;">Daily Range</span>
+                <span>{format_smart_price(d_min)}</span>
+                <div class="range-bar"><div class="range-fill" style="width:{day_pct}%;"></div></div>
+                <span>{format_smart_price(d_max)}</span>
+            </div>
+            <div class="range-row">
+                <span style="color:var(--muted); width:125px; font-family:'Outfit',sans-serif;">52W Range</span>
+                <span>{format_smart_price(h_min)}</span>
+                <div class="range-bar"><div class="range-fill" style="width:{yr_pct}%;"></div></div>
+                <span>{format_smart_price(h_max)}</span>
+            </div>
+        </div>
+
+        <!-- PAYWALL: TUTTI GLI INDICATORI, SENTIMENT, RSI E AI FORECAST BLOCCATI -->
+        <div class="paywall-box">
+            <div class="blur-rows">
+                <div class="blur-row"><span>AI Sentiment, Volatility & Momentum</span><span style="color:#10b981;">78.4% | 54% | HIGH</span></div>
+                <div class="blur-row"><span>Technical Indicators (RSI, MACD, BB, EMA)</span><span>RSI: XX.X | Bullish</span></div>
+                <div class="blur-row"><span>AI Trading Signal (Stop Loss & Take Profit)</span><span style="color:#10b981;">STRONG BUY</span></div>
+                <div class="blur-row"><span>30-Day Statistical Price Projection</span><span>Avg: XXX.XX | High: XXX.XX</span></div>
+                <div class="blur-row"><span>Executive Insider Sells & Correlations</span><span>Unlocked in App</span></div>
+            </div>
+            <div class="overlay-lock">
+                <span style="background:rgba(16,185,129,0.2); color:#34d399; border:1px solid #10b981; padding:4px 12px; border-radius:20px; font-size:0.75rem; font-weight:700;">
+                    🔒 UNLOCK FULL {upper_sym} ANALYSIS IN APP
+                </span>
+                <h2 style="margin:10px 0 6px 0; font-size:1.35rem; color:#fff;">
+                    Check {upper_sym} AI Sentiment, RSI, Signals & Targets
+                </h2>
+                <p style="margin:0 0 14px 0; color:var(--muted); max-width:460px; font-size:0.9rem;">
+                    Sentiment gauges, technical ratings, pivot points, and AI price projections for <b>{full_name}</b> are available inside the free <b>TradeGPT</b> Android app.
+                </p>
+                <a href="{play_link}" target="_blank" rel="noopener" class="btn-green" style="padding:13px 26px; font-size:1rem; border-radius:28px; box-shadow:0 6px 20px rgba(16,185,129,0.4);">
+                    📲 Download TradeGPT App (Free)
+                </a>
+            </div>
+        </div>
+
+        {news_cards_html}
+
+        <!-- PEOPLE ALSO WATCH (LINK INTERNI PER INDICIZZAZIONE GOOGLE) -->
+        <div class="card-section">
+            <h2 style="font-size:1.15rem; margin:0 0 12px 0; color:#fff;">👀 People Also Watch</h2>
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px;">
+                {''.join(similar_html_list)}
+            </div>
+        </div>
+    </div>
+
+    <div class="sticky-btm">
+        <div>
+            <div style="font-weight:700; font-size:0.92rem; color:#fff;">Get {upper_sym} AI Signals & Alerts</div>
+            <div style="font-size:0.75rem; color:#34d399;">Free on Google Play • TradeGPT</div>
+        </div>
+        <a href="{play_link}" target="_blank" rel="noopener" class="btn-green">Open App</a>
+    </div>
+
+    <script>
+        const rawData = {chart_json_str};
+        let isCandle = true;
+        let currentDays = 90;
+
+        const container = document.getElementById('tvchart');
+        const chart = LightweightCharts.createChart(container, {{
+            layout: {{ background: {{ type: 'solid', color: '#0d1118' }}, textColor: '#9ca3af' }},
+            grid: {{ vertLines: {{ color: 'rgba(255,255,255,0.03)' }}, horzLines: {{ color: 'rgba(255,255,255,0.05)' }} }},
+            rightPriceScale: {{ borderColor: 'rgba(255,255,255,0.1)' }},
+            timeScale: {{ borderColor: 'rgba(255,255,255,0.1)' }}
+        }});
+
+        let candleSeries = chart.addCandlestickSeries({{
+            upColor: '#10b981', downColor: '#ef4444',
+            borderUpColor: '#10b981', borderDownColor: '#ef4444',
+            wickUpColor: '#10b981', wickDownColor: '#ef4444'
+        }});
+
+        let areaSeries = chart.addAreaSeries({{
+            lineColor: '#10b981', topColor: 'rgba(16,185,129,0.35)', bottomColor: 'rgba(16,185,129,0.0)', lineWidth: 2, visible: false
+        }});
+
+        function renderData() {{
+            const sliced = rawData.slice(-currentDays);
+            candleSeries.setData(sliced);
+            areaSeries.setData(sliced.map(d => ({{ time: d.time, value: d.close }})));
+            chart.timeScale().fitContent();
+        }}
+
+        function setTf(days, btn) {{
+            currentDays = days;
+            document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            renderData();
+        }}
+
+        function toggleChartMode() {{
+            isCandle = !isCandle;
+            candleSeries.applyOptions({{ visible: isCandle }});
+            areaSeries.applyOptions({{ visible: !isCandle }});
+            document.getElementById('modeBtn').innerText = isCandle ? '📈 Line' : '🕯️ Candles';
+        }}
+
+        let descExp = false;
+        function toggleDesc() {{
+            descExp = !descExp;
+            const p = document.getElementById('compDesc');
+            p.style.webkitLineClamp = descExp ? 'unset' : '2';
+            document.getElementById('readMoreLbl').innerText = descExp ? 'Show less' : 'Read more';
+        }}
+
+        renderData();
+        window.addEventListener('resize', () => chart.applyOptions({{ width: container.clientWidth }}));
+    </script>
+</body>
+</html>"""
+
+            r2_manager.write_file(f"{seo_folder}/{slug}.html", html_page, is_json=False)
+            directory_by_sector[sector_clean].append((upper_sym, full_name, slug, curr_price, pct_change))
+            sitemap_urls.append(f"""  <url>
+    <loc>https://tradegpt-vector.com/assets/{slug}.html</loc>
+    <lastmod>{today_iso}</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.8</priority>
+  </url>""")
+        except Exception as e:
+            print(f"Errore SEO {sym}: {e}")
+
+    # Genera la Directory /assets/index.html e la Sitemap /public_seo/sitemap_assets.xml
+    sec_html = []
+    for sec in sorted(directory_by_sector.keys()):
+        cards = []
+        for sym, fn, sl, pr, ch in sorted(directory_by_sector[sec]):
+            c_col = "#10b981" if ch >= 0 else "#ef4444"
+            gh_l = f"https://raw.githubusercontent.com/pammyhouse/dati-finanziari/main/loghi/{sym}_img.png"
+            fmp_l = f"https://financialmodelingprep.com/image-stock/{sym}.png"
+            cards.append(f"<a href='/assets/{sl}.html' style='background:#131822; padding:12px; border-radius:12px; color:#fff; text-decoration:none; border:1px solid rgba(255,255,255,0.07); display:flex; align-items:center; justify-content:space-between;'><div style='display:flex; align-items:center; gap:10px;'><img src='{gh_l}' onerror=\"this.onerror=function(){{this.src='https://tradegpt-vector.com/tradeGPT_glass_logo.webp'}};this.src='{fmp_l}';\" width='32' height='32' style='border-radius:50%; object-fit:cover;'><div><b>{sym}</b><br><small style='color:#9ca3af;'>{fn}</small></div></div><span style='color:{c_col}; font-family:monospace;'>{ch:+.2f}%</span></a>")
+        sec_html.append(f"<h2 style='color:#34d399; margin-top:28px;'>{sec}</h2><div style='display:grid; grid-template-columns:repeat(auto-fill, minmax(250px,1fr)); gap:10px;'>{''.join(cards)}</div>")
+
+    index_assets_html = f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>All 200+ Covered Assets - Live Charts & AI Analysis | TradeGPT</title><link rel="canonical" href="https://tradegpt-vector.com/assets/"><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700&display=swap" rel="stylesheet"></head><body style="background:#0b0e14; color:#fff; font-family:'Outfit',sans-serif; padding:25px; max-width:1080px; margin:0 auto;"><a href="https://tradegpt-vector.com/" style="color:#34d399; text-decoration:none; font-weight:600;">← Back to TradeGPT Home</a><h1 style="margin-top:15px;">TradeGPT Market Directory</h1><p style="color:#9ca3af;">Select any asset to view live interactive candlestick/line charts, 52W ranges, and unlock AI forecasts in the app.</p>{''.join(sec_html)}</body></html>"""
+    r2_manager.write_file(f"{seo_folder}/index.html", index_assets_html, is_json=False)
+
+    sitemap_xml = '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' + "\n".join(sitemap_urls) + "\n</urlset>"
+    r2_manager.write_file("public_seo/sitemap_assets.xml", sitemap_xml, is_json=False)
+    print("Pagine SEO e sitemap_assets.xml salvate su R2!")
+
+# Avvia la generazione SEO
+generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, news_by_symbol)
+
+
+
+
 print("Tutte le operazioni completate con successo!")
