@@ -3059,6 +3059,47 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
         ContentType='application/xml; charset=utf-8',
         CacheControl='max-age=3600'
     )
+
+    # --- GENERAZIONE FILE LEGGERO PER LA HOME PAGE (public_seo/home_pulse.json) ---
+    home_tickers = [
+        "NVDA", "TSLA", "AAPL", "MSFT", "GOOGL", "PLTR",
+        "BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD", "BNBUSD", "DOGEUSD",
+        "ISP.MI", "RACE.MI", "UCG.MI", "ENEL.MI", "LDO.MI", "ASML.AS",
+        "EURUSD", "GBPUSD", "USDJPY", "GOLD", "SILVER", "OIL",
+        "SPY", "QQQ", "VOO", "VT", "GLD", "TLT"
+    ]
+    home_quotes = {}
+    for h_sym in home_tickers:
+        df_h = dati_storici_all.get(h_sym)
+        if df_h is None or len(df_h) < 2:
+            continue
+        try:
+            close_s = df_h['Close'].iloc[:, 0] if isinstance(df_h['Close'], pd.DataFrame) else df_h['Close']
+            cp = float(close_s.iloc[-1])
+            pp = float(close_s.iloc[-2])
+            if h_sym in prezzi_live_map and "price" in prezzi_live_map[h_sym]:
+                cp = float(prezzi_live_map[h_sym]["price"])
+                pp = float(prezzi_live_map[h_sym].get("prevClose", pp))
+            chg = ((cp - pp) / pp * 100.0) if pp else 0.0
+            home_quotes[h_sym] = {"p": format_smart_price(cp), "c": round(chg, 2)}
+        except Exception:
+            pass
+
+    home_news = []
+    for focus_sym in ["NVDA", "BTCUSD", "TSLA", "AAPL", "ISP.MI", "GOLD"]:
+        n_list = news_by_symbol.get(focus_sym, [])
+        if n_list:
+            t, _, _, src, _, dt = n_list[0]
+            d_str = dt.strftime("%b %d") if hasattr(dt, 'strftime') else ""
+            home_news.append({"sym": focus_sym, "title": t, "src": src, "date": d_str})
+
+    home_pulse_payload = {
+        "updated": datetime.utcnow().strftime("%b %d, %H:%M UTC"),
+        "quotes": home_quotes,
+        "news": home_news[:5]
+    }
+    r2_manager.write_file("public_seo/home_pulse.json", home_pulse_payload, is_json=True)
+    
     print("Pagine SEO professionali e sitemap_assets.xml salvate su R2!")
 
 generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, news_by_symbol)
