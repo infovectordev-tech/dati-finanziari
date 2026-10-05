@@ -2569,7 +2569,7 @@ r2_manager.write_file(f"{TARGET_FOLDER}/last_update.json", update_data, is_json=
 
 
 # ==============================================================================
-# 9. GENERATORE PROGRAMMATIC SEO PROFESSIONALE (STILE INVESTING.COM)
+# 9. GENERATORE PROGRAMMATIC SEO PROFESSIONALE
 # ==============================================================================
 def clean_slug(symbol):
     return re.sub(r'[^a-z0-9]+', '-', symbol.lower()).strip('-')
@@ -2601,10 +2601,76 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
     app_logo_url = "https://tradegpt-vector.com/tradeGPT_glass_logo.png"
     
     # Vero logo ufficiale a 4 colori del Google Play Store in un badge bianco arrotondato
-    play_svg = '<span style="background:#ffffff; width:24px; height:24px; border-radius:6px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; box-shadow:0 1px 3px rgba(0,0,0,0.2);"><img src="https://upload.wikimedia.org/wikipedia/commons/d/d0/Google_Play_Arrow_logo.svg" alt="Google Play" width="15" height="15" style="display:block;"></span>'
+    play_svg = '<span style="background:#ffffff; width:20px; height:20px; border-radius:4px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; box-shadow:0 1px 3px rgba(0,0,0,0.2);"><img src="https://upload.wikimedia.org/wikipedia/commons/d/d0/Google_Play_Arrow_logo.svg" alt="Google Play" width="13" height="13" style="display:block;"></span>'
     
     prezzi_live_root = r2_manager.read_json("prezzi.json")
     prezzi_live_map = prezzi_live_root.get("data", {}) if isinstance(prezzi_live_root, dict) else {}
+
+    all_valid_syms = [s for s in dati_storici_all.keys() if dati_storici_all[s] is not None and len(dati_storici_all[s]) >= 10]
+
+    # Pre-calcolo quotes per la Top Ticker Strip e per home_pulse.json
+    home_tickers = [
+        "NVDA", "TSLA", "AAPL", "MSFT", "GOOGL", "PLTR",
+        "BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD", "BNBUSD", "DOGEUSD",
+        "ISP.MI", "RACE.MI", "UCG.MI", "ENEL.MI", "LDO.MI", "ASML.AS",
+        "EURUSD", "GBPUSD", "USDJPY", "GOLD", "SILVER", "OIL",
+        "SPY", "QQQ", "VOO", "VT", "GLD", "TLT"
+    ]
+    home_quotes = {}
+    for h_sym in home_tickers:
+        df_h = dati_storici_all.get(h_sym)
+        if df_h is None or len(df_h) < 2:
+            continue
+        try:
+            close_s = df_h['Close'].iloc[:, 0] if isinstance(df_h['Close'], pd.DataFrame) else df_h['Close']
+            cp = float(close_s.iloc[-1])
+            pp = float(close_s.iloc[-2])
+            if h_sym in prezzi_live_map and "price" in prezzi_live_map[h_sym]:
+                cp = float(prezzi_live_map[h_sym]["price"])
+                pp = float(prezzi_live_map[h_sym].get("prevClose", pp))
+            chg = ((cp - pp) / pp * 100.0) if pp else 0.0
+            home_quotes[h_sym] = {"p": format_smart_price(cp), "c": round(chg, 2)}
+        except Exception:
+            pass
+
+    # Costruzione HTML statico della Top Ticker Strip (già popolata coi numeri veri, zero fetch extra!)
+    strip_tickers = [
+        ("NVDA", "NVDA", "nvda"),
+        ("BTCUSD", "BTC/USD", "btcusd"),
+        ("TSLA", "TSLA", "tsla"),
+        ("EURUSD", "EUR/USD", "eurusd"),
+        ("GOLD", "GOLD", "gold"),
+        ("ISP.MI", "ISP.MI", "isp-mi"),
+        ("RACE.MI", "RACE.MI", "race-mi"),
+        ("AAPL", "AAPL", "aapl"),
+        ("SPY", "S&P 500 ETF", "spy")
+    ]
+    strip_items_html = []
+    for s_key, s_label, s_slug in strip_tickers:
+        q_info = home_quotes.get(s_key)
+        if q_info:
+            c_val = q_info["c"]
+            c_cls = "tape-up" if c_val >= 0 else "tape-down"
+            c_str = f"{c_val:+.2f}%"
+            p_str = q_info["p"]
+        else:
+            c_cls = "tape-up"
+            c_str = "Chart"
+            p_str = ""
+        strip_items_html.append(
+            f'<a href="https://tradegpt-vector.com/assets/{s_slug}.html" class="strip-item">'
+            f'<span class="strip-dot"></span><span class="strip-sym">{s_label}</span>'
+            f'<span class="strip-price">{p_str}</span><span class="{c_cls}">{c_str}</span></a>'
+        )
+    top_strip_html = "\n            ".join(strip_items_html)
+
+    # Indice di ricerca completo per la barra di ricerca nell'header di tutte le pagine asset
+    search_index_list = []
+    for s_sym in all_valid_syms:
+        s_up = s_sym.upper()
+        s_fn = symbol_name_map.get(s_sym, [s_sym])[0]
+        search_index_list.append([s_up, s_fn])
+    search_index_json = json.dumps(search_index_list)
 
     sitemap_urls = [
         f"""  <url>
@@ -2616,7 +2682,6 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
     ]
     
     directory_by_sector = defaultdict(list)
-    all_valid_syms = [s for s in dati_storici_all.keys() if dati_storici_all[s] is not None and len(dati_storici_all[s]) >= 10]
 
     for sym in all_valid_syms:
         try:
@@ -2711,7 +2776,7 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
                 for n_title, _, _, n_src, _, n_date in raw_news:
                     d_fmt = n_date.strftime("%b %d, %Y") if hasattr(n_date, 'strftime') else ""
                     n_items.append(f"""
-                    <div style="padding:12px 0; border-bottom:1px solid #1e2430; display:flex; justify-content:space-between; align-items:center; gap:14px;">
+                    <div style="padding:12px 0; border-bottom:1px solid #1a202e; display:flex; justify-content:space-between; align-items:center; gap:14px;">
                         <div>
                             <div style="font-size:0.88rem; color:#f3f4f6; font-weight:500;">{n_title}</div>
                             <div style="font-size:0.75rem; color:#6b7280; margin-top:3px;">{n_src} • {d_fmt}</div>
@@ -2735,10 +2800,10 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
                 s_logo = f"https://raw.githubusercontent.com/pammyhouse/dati-finanziari/main/loghi/{s_sym.upper()}_img.png"
                 s_fmp = f"https://financialmodelingprep.com/image-stock/{s_sym.upper()}.png"
                 similar_html_list.append(f"""
-                <a href="https://tradegpt-vector.com/assets/{s_slug}.html" style="background:#171c28; border:1px solid #1e2430; border-radius:6px; padding:10px 12px; text-decoration:none; color:#fff; display:flex; align-items:center; gap:10px;">
+                <a href="https://tradegpt-vector.com/assets/{s_slug}.html" style="background:#181d29; border:1px solid #232a3b; border-radius:6px; padding:10px 12px; text-decoration:none; color:#fff; display:flex; align-items:center; gap:10px; transition:border-color 0.15s;">
                     <img src="{s_logo}" onerror="this.onerror=function(){{this.src='{app_logo_url}'}};this.src='{s_fmp}';" width="32" height="32" style="border-radius:50%; object-fit:cover;">
                     <div style="overflow:hidden;">
-                        <div style="font-weight:600; font-size:0.85rem;">{s_sym}</div>
+                        <div style="font-weight:700; font-size:0.85rem;">{s_sym}</div>
                         <div style="font-size:0.72rem; color:#9ca3af; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{s_name}</div>
                     </div>
                 </a>""")
@@ -2758,70 +2823,267 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
     <meta name="description" content="{full_name} ({upper_sym}) live interactive candlestick chart, current price ({format_smart_price(curr_price)}), 52-week range, and institutional volume data on TradeGPT.">
     <meta name="robots" content="index, follow">
     <link rel="canonical" href="https://tradegpt-vector.com/assets/{slug}.html">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
     <style>
-        :root {{ --bg-main:#0b0e14; --bg-card:#12161f; --border:#1e2430; --emerald:#10b981; --red:#ef4444; --text-primary:#f3f4f6; --text-secondary:#9ca3af; --text-muted:#6b7280; }}
-        * {{ box-sizing:border-box; }}
-        body {{ background:var(--bg-main); color:var(--text-primary); font-family:'Inter',sans-serif; margin:0; padding:0 0 84px 0; overflow-x:hidden; -webkit-font-smoothing:antialiased; }}
-        .site-header {{ background:var(--bg-card); border-bottom:1px solid var(--border); padding:12px 20px; position:sticky; top:0; z-index:1000; }}
-        .header-inner {{ max-width:960px; margin:0 auto; display:flex; align-items:center; justify-content:space-between; }}
-        .brand-link {{ display:flex; align-items:center; gap:10px; text-decoration:none; color:var(--text-primary); }}
-        .brand-link img {{ width:32px; height:32px; border-radius:6px; }}
-        .btn-play-sm {{ display:inline-flex; align-items:center; gap:8px; background:var(--emerald); color:#000; font-weight:600; font-size:0.82rem; padding:6px 14px 6px 8px; border-radius:8px; text-decoration:none; }}
-        .container {{ max-width:960px; margin:0 auto; padding:24px 16px; }}
-        .instrument-header {{ display:flex; justify-content:space-between; align-items:flex-start; padding-bottom:18px; border-bottom:1px solid var(--border); margin-bottom:18px; }}
-        .instrument-id {{ display:flex; align-items:center; gap:14px; }}
-        .instrument-logo {{ width:44px; height:44px; border-radius:50%; object-fit:cover; background:#1a202c; border:1px solid var(--border); }}
-        .quote-price {{ font-family:'Space Mono',monospace; font-size:2.3rem; font-weight:700; color:#fff; line-height:1; }}
-        .quote-stats {{ font-family:'Space Mono',monospace; font-size:0.88rem; margin-top:8px; display:flex; flex-wrap:wrap; align-items:center; gap:14px; }}
-        .chart-panel {{ background:var(--bg-card); border:1px solid var(--border); border-radius:8px; padding:14px; margin-bottom:20px; }}
-        .chart-toolbar {{ display:flex; justify-content:space-between; align-items:center; padding-bottom:10px; margin-bottom:10px; border-bottom:1px solid var(--border); }}
-        .chart-toggle-btn {{ background:#1a202c; border:1px solid var(--border); color:var(--text-primary); width:34px; height:34px; border-radius:6px; display:flex; align-items:center; justify-content:center; cursor:pointer; }}
-        #tvchart {{ width:100%; height:380px; }}
-        .tools-bar {{ display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:20px; }}
-        .tool-btn {{ background:var(--bg-card); border:1px solid var(--border); border-radius:6px; padding:11px 12px; color:var(--text-primary); text-decoration:none; font-size:0.84rem; font-weight:600; display:flex; align-items:center; justify-content:space-between; }}
-        .lock-tag {{ font-size:0.68rem; color:var(--emerald); background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.25); padding:2px 6px; border-radius:4px; font-family:'Space Mono',monospace; }}
-        .panel-box {{ background:var(--bg-card); border:1px solid var(--border); border-radius:8px; padding:20px; margin-bottom:20px; }}
-        .panel-title {{ font-size:0.95rem; font-weight:600; color:#fff; margin:0 0 16px 0; padding-bottom:10px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }}
-        .range-item {{ display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; font-family:'Space Mono',monospace; font-size:0.82rem; }}
-        .range-item:last-child {{ margin-bottom:0; }}
-        .range-lbl {{ font-family:'Inter',sans-serif; color:var(--text-secondary); width:140px; font-size:0.84rem; }}
-        .range-track {{ flex:1; margin:0 16px; height:5px; background:#1e2430; border-radius:3px; overflow:hidden; }}
-        .range-bar-fill {{ height:100%; background:#3b82f6; border-radius:3px; }}
-        .paywall-panel {{ position:relative; background:var(--bg-card); border:1px solid var(--border); border-radius:8px; overflow:hidden; margin-bottom:20px; }}
-        .paywall-table {{ width:100%; border-collapse:collapse; font-size:0.85rem; }}
-        .paywall-table th, .paywall-table td {{ padding:12px 16px; text-align:left; border-bottom:1px solid var(--border); }}
-        .paywall-table th {{ color:var(--text-secondary); font-weight:500; }}
-        .blurred-val {{ filter:blur(6px); user-select:none; font-family:'Space Mono',monospace; color:var(--text-primary); }}
-        .paywall-cta-banner {{ background:linear-gradient(180deg,rgba(18,22,31,0.4) 0%,rgba(18,22,31,0.98) 35%,#12161f 100%); padding:36px 20px 24px 20px; text-align:center; margin-top:-90px; position:relative; z-index:5; }}
-        .btn-google-play {{ display:inline-flex; align-items:center; gap:10px; background:var(--emerald); color:#000; font-weight:700; font-size:0.92rem; padding:10px 22px 10px 12px; border-radius:8px; text-decoration:none; margin-top:12px; }}
-        .sticky-app-footer {{ position:fixed; bottom:0; left:0; right:0; background:#12161f; border-top:1px solid var(--border); padding:12px 20px; z-index:9999; }}
-        .sticky-inner {{ max-width:960px; margin:0 auto; display:flex; align-items:center; justify-content:space-between; gap:12px; }}
-        @media (max-width:640px) {{ .tools-bar {{ grid-template-columns:1fr; }} .quote-price {{ font-size:1.9rem; }} #tvchart {{ height:300px; }} }}
+        :root {{
+            --bg-body: #0b0e14;
+            --bg-surface: #12161f;
+            --bg-elevated: #181d29;
+            --bg-hover: #1e2534;
+            --border-color: #232a3b;
+            --border-subtle: #1a202e;
+            --text-main: #f3f4f6;
+            --text-secondary: #9ca3af;
+            --text-muted: #6b7280;
+            --accent-emerald: #10b981;
+            --accent-orange: #f59e0b;
+            --accent-blue: #3b82f6;
+            --up-green: #10b981;
+            --down-red: #ef4444;
+        }}
+        *, *::before, *::after {{ box-sizing: border-box; }}
+        html, body {{
+            margin: 0; padding: 0 0 76px 0; width: 100%; max-width: 100vw; overflow-x: hidden;
+            background-color: var(--bg-body); color: var(--text-main);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            -webkit-font-smoothing: antialiased; font-size: 14px;
+        }}
+        a {{ color: inherit; text-decoration: none; }}
+
+        /* --- 1. TOP TICKER TAPE UNIFICATA --- */
+        .top-ticker-strip {{
+            background: #080a0f; border-bottom: 1px solid var(--border-color); height: 36px;
+            display: flex; align-items: center; overflow-x: auto; white-space: nowrap; padding: 0 16px; scrollbar-width: none;
+        }}
+        .top-ticker-strip::-webkit-scrollbar {{ display: none; }}
+        .strip-inner {{ max-width: 1320px; margin: 0 auto; display: flex; align-items: center; gap: 20px; width: 100%; }}
+        .strip-item {{ display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 6px; border-radius: 4px; transition: background 0.15s; }}
+        .strip-item:hover {{ background: var(--bg-elevated); }}
+        .strip-sym {{ font-weight: 700; color: #fff; }}
+        .strip-price {{ font-family: 'Space Mono', monospace; color: var(--text-secondary); font-size: 11.5px; }}
+        .tape-up {{ font-family: 'Space Mono', monospace; color: var(--up-green); font-weight: 700; font-size: 11.5px; }}
+        .tape-down {{ font-family: 'Space Mono', monospace; color: var(--down-red); font-weight: 700; font-size: 11.5px; }}
+        .strip-dot {{ width: 6px; height: 6px; border-radius: 50%; background: var(--up-green); display: inline-block; }}
+
+        /* --- 2. HEADER PRINCIPALE A DOPPIA BARRA UNIFICATO --- */
+        .inv-header {{ background: var(--bg-surface); border-bottom: 1px solid var(--border-color); position: sticky; top: 0; z-index: 1000; }}
+        .inv-header-top {{ max-width: 1320px; margin: 0 auto; padding: 10px 20px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }}
+        .brand-box {{ display: flex; align-items: center; gap: 10px; flex-shrink: 0; }}
+        .brand-box img {{ width: 34px; height: 34px; border-radius: 7px; object-fit: contain; }}
+        .brand-title {{ font-size: 19px; font-weight: 800; letter-spacing: -0.5px; color: #fff; }}
+        .brand-pro-tag {{ background: var(--accent-emerald); color: #000; font-size: 10px; font-weight: 800; padding: 2px 5px; border-radius: 3px; text-transform: uppercase; margin-left: 2px; }}
+
+        .header-search-wrap {{ flex: 1; max-width: 520px; position: relative; }}
+        .header-search-input {{
+            width: 100%; height: 38px; background: var(--bg-body); border: 1px solid var(--border-color);
+            border-radius: 6px; padding: 0 14px 0 38px; color: #fff; font-family: 'Inter', sans-serif; font-size: 13.5px; outline: none;
+        }}
+        .header-search-input:focus {{ border-color: var(--accent-emerald); }}
+        .header-search-icon {{ position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--text-muted); pointer-events: none; }}
+        .search-results-dropdown {{
+            position: absolute; top: calc(100% + 4px); left: 0; right: 0; background: var(--bg-surface);
+            border: 1px solid var(--border-color); border-radius: 6px; max-height: 320px; overflow-y: auto; z-index: 9999; display: none; box-shadow: 0 12px 32px rgba(0,0,0,0.75);
+        }}
+        .search-res-item {{ display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--border-subtle); font-size: 13px; }}
+        .search-res-item:hover {{ background: var(--bg-hover); }}
+
+        .btn-header-play {{
+            display: inline-flex; align-items: center; gap: 8px; background: var(--accent-emerald);
+            color: #000; font-weight: 700; font-size: 12.5px; padding: 7px 14px; border-radius: 6px; flex-shrink: 0;
+        }}
+        .btn-header-play:hover {{ background: #34d399; }}
+
+        .inv-nav-bar {{ background: #0e121a; border-top: 1px solid var(--border-subtle); }}
+        .inv-nav-inner {{
+            max-width: 1320px; margin: 0 auto; padding: 0 20px; display: flex; align-items: center;
+            justify-content: space-between; height: 40px; overflow-x: auto; white-space: nowrap; scrollbar-width: none;
+        }}
+        .inv-nav-inner::-webkit-scrollbar {{ display: none; }}
+        .inv-nav-links {{ display: flex; align-items: center; gap: 24px; list-style: none; margin: 0; padding: 0; height: 100%; }}
+        .inv-nav-links li {{ height: 100%; display: flex; align-items: center; }}
+        .inv-nav-links a {{
+            font-size: 13px; font-weight: 600; color: var(--text-secondary); height: 100%;
+            display: flex; align-items: center; border-bottom: 2px solid transparent;
+        }}
+        .inv-nav-links a:hover, .inv-nav-links a.active {{ color: #fff; border-bottom-color: var(--accent-emerald); }}
+        .quick-sublinks {{ display: flex; align-items: center; gap: 14px; font-size: 12px; }}
+        .quick-sublinks a {{ color: var(--text-muted); padding: 2px 8px; border-radius: 4px; background: rgba(255,255,255,0.03); border: 1px solid var(--border-subtle); }}
+        .quick-sublinks a:hover {{ color: #fff; border-color: var(--border-color); }}
+
+        /* --- 3. STILI PAGINA TICKER --- */
+        .container {{ max-width: 1060px; margin: 0 auto; padding: 24px 20px; }}
+        .breadcrumb-bar {{ font-size: 12px; color: var(--text-muted); margin-bottom: 14px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }}
+        .breadcrumb-bar a {{ color: var(--accent-emerald); font-weight: 600; }}
+        .instrument-header {{ display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: 18px; border-bottom: 1px solid var(--border-color); margin-bottom: 18px; }}
+        .instrument-id {{ display: flex; align-items: center; gap: 14px; }}
+        .instrument-logo {{ width: 46px; height: 46px; border-radius: 50%; object-fit: cover; background: var(--bg-elevated); border: 1px solid var(--border-color); }}
+        .quote-price {{ font-family: 'Space Mono', monospace; font-size: 2.35rem; font-weight: 700; color: #fff; line-height: 1; }}
+        .quote-stats {{ font-family: 'Space Mono', monospace; font-size: 0.88rem; margin-top: 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }}
+        
+        .chart-panel {{ background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 6px; padding: 16px; margin-bottom: 20px; }}
+        .chart-toolbar {{ display: flex; justify-content: space-between; align-items: center; padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--border-subtle); }}
+        .chart-toggle-btn {{ background: var(--bg-elevated); border: 1px solid var(--border-color); color: var(--text-main); width: 34px; height: 34px; border-radius: 6px; display: flex; align-items: center; justify-content: center; cursor: pointer; }}
+        #tvchart {{ width: 100%; height: 390px; }}
+
+        .tools-bar {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; }}
+        .tool-btn {{ background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 6px; padding: 12px 14px; color: var(--text-main); font-size: 0.85rem; font-weight: 600; display: flex; align-items: center; justify-content: space-between; transition: border-color 0.15s; }}
+        .tool-btn:hover {{ border-color: var(--accent-emerald); }}
+        .lock-tag {{ font-size: 0.68rem; color: var(--accent-emerald); background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.25); padding: 2px 6px; border-radius: 4px; font-family: 'Space Mono', monospace; }}
+
+        .panel-box {{ background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 6px; padding: 20px; margin-bottom: 20px; }}
+        .panel-title {{ font-size: 0.98rem; font-weight: 700; color: #fff; margin: 0 0 16px 0; padding-bottom: 10px; border-bottom: 1px solid var(--border-subtle); display: flex; justify-content: space-between; align-items: center; }}
+        .range-item {{ display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; font-family: 'Space Mono', monospace; font-size: 0.82rem; }}
+        .range-item:last-child {{ margin-bottom: 0; }}
+        .range-lbl {{ font-family: 'Inter', sans-serif; color: var(--text-secondary); width: 145px; font-size: 0.84rem; }}
+        .range-track {{ flex: 1; margin: 0 16px; height: 5px; background: var(--border-color); border-radius: 3px; overflow: hidden; }}
+        .range-bar-fill {{ height: 100%; background: var(--accent-blue); border-radius: 3px; }}
+
+        .paywall-panel {{ position: relative; background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 6px; overflow: hidden; margin-bottom: 20px; }}
+        .paywall-table {{ width: 100%; border-collapse: collapse; font-size: 0.85rem; }}
+        .paywall-table th, .paywall-table td {{ padding: 12px 16px; text-align: left; border-bottom: 1px solid var(--border-subtle); }}
+        .paywall-table th {{ color: var(--text-muted); font-weight: 600; font-size: 11.5px; text-transform: uppercase; }}
+        .blurred-val {{ filter: blur(6px); user-select: none; font-family: 'Space Mono', monospace; color: var(--text-main); }}
+        .paywall-cta-banner {{ background: linear-gradient(180deg, rgba(18,22,31,0.4) 0%, rgba(18,22,31,0.98) 35%, #12161f 100%); padding: 36px 20px 24px 20px; text-align: center; margin-top: -90px; position: relative; z-index: 5; }}
+        .btn-google-play {{ display: inline-flex; align-items: center; gap: 10px; background: var(--accent-emerald); color: #000; font-weight: 700; font-size: 0.92rem; padding: 10px 22px 10px 12px; border-radius: 6px; margin-top: 12px; }}
+
+        /* Disclaimer Legale Rigoroso & Accettazione Implicita */
+        .legal-notice-box {{
+            background: rgba(239, 68, 68, 0.05); border: 1px solid rgba(239, 68, 68, 0.25);
+            border-radius: 6px; padding: 18px 20px; margin-top: 28px; color: var(--text-secondary); font-size: 12px; line-height: 1.65;
+        }}
+        .legal-notice-box strong {{ color: #fca5a5; }}
+        .legal-notice-box a {{ color: var(--accent-emerald); text-decoration: underline; }}
+
+        .inv-footer {{ background: #080a0f; border-top: 1px solid var(--border-color); padding: 32px 20px; margin-top: 36px; color: var(--text-muted); font-size: 12px; line-height: 1.6; }}
+        .inv-footer-inner {{ max-width: 1060px; margin: 0 auto; }}
+
+        .sticky-app-footer {{ position: fixed; bottom: 0; left: 0; right: 0; background: #12161f; border-top: 1px solid var(--border-color); padding: 10px 20px; z-index: 9990; }}
+        .sticky-inner {{ max-width: 1060px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 12px; }}
+
+        /* Menu Mobile Drawer */
+        .mobile-menu-btn {{ display: none; background: transparent; border: 1px solid var(--border-color); color: #fff; width: 36px; height: 36px; border-radius: 6px; align-items: center; justify-content: center; cursor: pointer; }}
+        .mobile-drawer-backdrop {{ display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75); z-index: 9998; }}
+        .mobile-drawer-backdrop.open {{ display: block; }}
+        .mobile-drawer {{ position: fixed; top: 0; left: 0; bottom: 0; width: 270px; background: var(--bg-surface); border-right: 1px solid var(--border-color); z-index: 9999; transform: translateX(-105%); transition: transform 0.25s ease; padding: 20px; display: flex; flex-direction: column; gap: 16px; }}
+        .mobile-drawer.open {{ transform: translateX(0); }}
+        .mobile-drawer-links {{ list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }}
+        .mobile-drawer-links a {{ display: block; padding: 11px 12px; border-radius: 6px; font-weight: 600; color: var(--text-main); }}
+        .mobile-drawer-links a:hover, .mobile-drawer-links a.active {{ background: var(--bg-hover); color: var(--accent-emerald); }}
+
+        @media (max-width: 1080px) {{ .quick-sublinks {{ display: none; }} }}
+        @media (max-width: 768px) {{
+            .mobile-menu-btn {{ display: inline-flex; }}
+            .inv-header-top {{ flex-wrap: wrap; padding: 10px 14px; gap: 10px; }}
+            .header-search-wrap {{ order: 3; max-width: 100%; width: 100%; flex: 0 0 100%; }}
+            .inv-nav-bar {{ display: none; }}
+            .tools-bar {{ grid-template-columns: 1fr; }}
+            .quote-price {{ font-size: 1.9rem; }}
+            #tvchart {{ height: 300px; }}
+            .container {{ padding: 16px 12px; }}
+        }}
     </style>
 </head>
 <body>
-    <header class="site-header">
-        <div class="header-inner">
-            <a href="https://tradegpt-vector.com/" class="brand-link">
-                <img src="{app_logo_url}" onerror="this.onerror=null;this.src='https://tradegpt-vector.com/favicon.svg';" alt="TradeGPT">
-                <span style="font-weight:700; font-size:1rem;">TradeGPT</span>
+
+    <!-- 1. TOP LIVE TICKER STRIP -->
+    <div class="top-ticker-strip">
+        <div class="strip-inner">
+            {top_strip_html}
+        </div>
+    </div>
+
+    <!-- DRAWER MOBILE UNIFICATO -->
+    <div class="mobile-drawer-backdrop" id="sidebarBackdrop" onclick="closeMobileSidebar()"></div>
+    <aside class="mobile-drawer" id="sidebar">
+        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border-color); padding-bottom:12px;">
+            <div class="brand-box">
+                <img src="{app_logo_url}" alt="TradeGPT" width="30" height="30">
+                <span class="brand-title">TradeGPT</span>
+            </div>
+            <button onclick="closeMobileSidebar()" style="background:none; border:none; color:#9ca3af; font-size:20px; cursor:pointer;">✕</button>
+        </div>
+        <ul class="mobile-drawer-links">
+            <li><a href="https://tradegpt-vector.com/index.html">Markets Home</a></li>
+            <li><a href="https://tradegpt-vector.com/assets/" class="active">All 260+ Assets Directory</a></li>
+            <li><a href="https://tradegpt-vector.com/index.html#hot-assets-section">Smart Rankings</a></li>
+            <li><a href="https://tradegpt-vector.com/index.html#features-section">Features & Tiers</a></li>
+            <li><a href="https://tradegpt-vector.com/products.html">API & Pricing</a></li>
+            <li><a href="https://tradegpt-vector.com/docs.html">Developer Docs</a></li>
+            <li><a href="https://tradegpt-vector.com/about.html">About Us</a></li>
+        </ul>
+        <div style="margin-top:auto; padding-top:14px; border-top:1px solid var(--border-color);">
+            <a href="{play_link}" target="_blank" rel="noopener" class="btn-header-play" style="width:100%; justify-content:center; padding:10px;">
+                {play_svg} <span>Get App (Free)</span>
             </a>
-            <div style="display:flex; align-items:center; gap:16px;">
-                <a href="https://tradegpt-vector.com/assets/" style="color:var(--text-secondary); text-decoration:none; font-size:0.85rem; font-weight:500;">Markets Directory</a>
-                <a href="{play_link}" target="_blank" rel="noopener" class="btn-play-sm">{play_svg} Google Play</a>
+        </div>
+    </aside>
+
+    <!-- 2. HEADER ORIZZONTALE UNIFICATO (IDENTICO A INDEX.HTML) -->
+    <header class="inv-header">
+        <div class="inv-header-top">
+            <div style="display:flex; align-items:center; gap:12px;">
+                <button class="mobile-menu-btn" onclick="toggleMobileSidebar(event)" aria-label="Menu">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+                </button>
+                <a href="https://tradegpt-vector.com/" class="brand-box">
+                    <img src="{app_logo_url}" onerror="this.onerror=null;this.src='https://tradegpt-vector.com/favicon.svg';" alt="TradeGPT">
+                    <span class="brand-title">TradeGPT <span class="brand-pro-tag">AI</span></span>
+                </a>
+            </div>
+
+            <div class="header-search-wrap">
+                <svg class="header-search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                <input type="text" id="assetSearchInput" class="header-search-input" placeholder="Search 260+ stocks, crypto, forex, ETFs (e.g., NVDA, Ferrari, Bitcoin, Gold...)" autocomplete="off">
+                <div class="search-results-dropdown" id="searchDropdown"></div>
+            </div>
+
+            <div style="display:flex; align-items:center; gap:12px;">
+                <a href="{play_link}" target="_blank" rel="noopener" class="btn-header-play">
+                    {play_svg} <span>Get App (Free)</span>
+                </a>
+            </div>
+        </div>
+
+        <div class="inv-nav-bar">
+            <div class="inv-nav-inner">
+                <ul class="inv-nav-links">
+                    <li><a href="https://tradegpt-vector.com/index.html">Markets Home</a></li>
+                    <li><a href="https://tradegpt-vector.com/assets/" class="active">All 260+ Assets Directory</a></li>
+                    <li><a href="https://tradegpt-vector.com/index.html#hot-assets-section">Smart Rankings</a></li>
+                    <li><a href="https://tradegpt-vector.com/index.html#features-section">Features & Tiers</a></li>
+                    <li><a href="https://tradegpt-vector.com/products.html">API & Pricing</a></li>
+                    <li><a href="https://tradegpt-vector.com/docs.html">Developer Docs</a></li>
+                    <li><a href="https://tradegpt-vector.com/about.html">About Us</a></li>
+                </ul>
+                <div class="quick-sublinks">
+                    <a href="https://tradegpt-vector.com/assets/nvda.html">NVDA</a>
+                    <a href="https://tradegpt-vector.com/assets/btcusd.html">Bitcoin</a>
+                    <a href="https://tradegpt-vector.com/assets/isp-mi.html">FTSE MIB</a>
+                    <a href="https://tradegpt-vector.com/assets/gold.html">Gold</a>
+                    <a href="https://tradegpt-vector.com/assets/eurusd.html">EUR/USD</a>
+                </div>
             </div>
         </div>
     </header>
 
+    <!-- 3. CONTENUTO PRINCIPALE ASSET -->
     <div class="container">
+        <div class="breadcrumb-bar">
+            <div>
+                <a href="https://tradegpt-vector.com/">Markets Home</a> / <a href="https://tradegpt-vector.com/assets/">Assets Directory</a> / <span>{upper_sym} ({full_name})</span>
+            </div>
+            <span>Sector: <b style="color:#fff;">{sector_clean}</b></span>
+        </div>
+
         <div class="instrument-header">
             <div class="instrument-id">
                 <img src="{gh_logo}" onerror="this.onerror=function(){{this.src='{app_logo_url}'}};this.src='{fmp_logo}';" alt="{upper_sym}" class="instrument-logo">
                 <div>
-                    <h1 style="font-size:1.4rem; font-weight:700; margin:0; color:#fff;">{full_name} ({upper_sym})</h1>
-                    <p style="font-size:0.82rem; color:var(--text-secondary); margin:4px 0 0 0;">{sector_clean} • Quantitative Market Data</p>
+                    <h1 style="font-size:1.45rem; font-weight:800; margin:0; color:#fff; letter-spacing:-0.3px;">{full_name} ({upper_sym})</h1>
+                    <p style="font-size:0.82rem; color:var(--text-secondary); margin:4px 0 0 0;">{sector_clean} • Quantitative Market Data & AI Analytics</p>
                 </div>
             </div>
         </div>
@@ -2829,10 +3091,10 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
         <div style="margin-bottom:20px;">
             <div class="quote-price">{format_smart_price(curr_price)}</div>
             <div class="quote-stats">
-                <span style="color:{chg_col};">{abs_change:+.2f} ({pct_change:+.2f}%) 24h</span>
-                <span style="color:var(--border);">|</span>
-                <span style="color:{wk_col};">{week_change:+.2f}% 7D</span>
-                <span style="color:var(--border);">|</span>
+                <span style="color:{chg_col}; font-weight:700;">{abs_change:+.2f} ({pct_change:+.2f}%) 24h</span>
+                <span style="color:var(--border-color);">|</span>
+                <span style="color:{wk_col}; font-weight:700;">{week_change:+.2f}% 7D</span>
+                <span style="color:var(--border-color);">|</span>
                 <span style="color:var(--text-muted); font-size:0.8rem;">{status_html}</span>
             </div>
             {ext_html}
@@ -2840,15 +3102,15 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
 
         <div class="chart-panel">
             <div class="chart-toolbar">
-                <span style="font-size:0.8rem; font-weight:600; color:var(--text-secondary); text-transform:uppercase;">{upper_sym} Interactive Historical Chart</span>
+                <span style="font-size:0.8rem; font-weight:700; color:var(--text-secondary); text-transform:uppercase;">{upper_sym} Interactive Historical Chart</span>
                 <button class="chart-toggle-btn" onclick="toggleChartType()" title="Toggle Candlestick / Line Chart" aria-label="Toggle Chart Type">
                     <svg id="iconLine" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"></polyline><polyline points="16 7 22 7 22 13"></polyline></svg>
                     <svg id="iconCandle" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;"><line x1="7" y1="3" x2="7" y2="21"></line><rect x="4" y="7" width="6" height="9" rx="1" fill="currentColor"></rect><line x1="17" y1="4" x2="17" y2="20"></line><rect x="14" y="9" width="6" height="7" rx="1"></rect></svg>
                 </button>
             </div>
             <div id="tvchart"></div>
-            <div style="font-size:0.72rem; color:var(--text-muted); margin-top:10px; display:flex; justify-content:space-between;">
-                <span>Market data is provided for informational purposes only.</span>
+            <div style="font-size:0.72rem; color:var(--text-muted); margin-top:10px; display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+                <span>Market data is provided for informational and educational purposes only.</span>
                 <span>Drag or pinch to inspect historical candles</span>
             </div>
         </div>
@@ -2900,16 +3162,16 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
         </div>
 
         <div class="paywall-panel">
-            <div style="padding:16px 20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
-                <span style="font-weight:600; font-size:0.95rem; color:#fff;">Quantitative Technical Ratings & AI Signals ({upper_sym})</span>
-                <span style="font-size:0.75rem; color:var(--emerald); font-family:'Space Mono',monospace;">LIVE IN APP</span>
+            <div style="padding:16px 20px; border-bottom:1px solid var(--border-subtle); display:flex; justify-content:space-between; align-items:center;">
+                <span style="font-weight:700; font-size:0.95rem; color:#fff;">Quantitative Technical Ratings & AI Signals ({upper_sym})</span>
+                <span style="font-size:0.75rem; color:var(--accent-emerald); font-family:'Space Mono',monospace; font-weight:700;">LIVE IN APP</span>
             </div>
             <table class="paywall-table">
                 <thead>
                     <tr><th>Metric / Indicator</th><th>Value</th><th>Signal</th></tr>
                 </thead>
                 <tbody>
-                    <tr><td>AI Hybrid Probability Score</td><td class="blurred-val">84.6%</td><td class="blurred-val" style="color:var(--emerald);">STRONG BUY</td></tr>
+                    <tr><td>AI Hybrid Probability Score</td><td class="blurred-val">84.6%</td><td class="blurred-val" style="color:var(--accent-emerald);">STRONG BUY</td></tr>
                     <tr><td>RSI (14) & Stochastic %K</td><td class="blurred-val">62.4 / 71.2</td><td class="blurred-val">Bullish</td></tr>
                     <tr><td>MACD (12, 26, 9) & EMA (10)</td><td class="blurred-val">+2.45 / 308.10</td><td class="blurred-val">Buy</td></tr>
                     <tr><td>AI News Sentiment & Momentum</td><td class="blurred-val">76.0 / 100</td><td class="blurred-val">Positive</td></tr>
@@ -2932,7 +3194,7 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
             <p id="profileText" style="margin:0; font-size:0.88rem; color:var(--text-secondary); line-height:1.6; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">
                 {company_desc}
             </p>
-            <span id="profileMore" style="color:var(--emerald); font-size:0.82rem; font-weight:600; display:inline-block; margin-top:8px;">Read more</span>
+            <span id="profileMore" style="color:var(--accent-emerald); font-size:0.82rem; font-weight:600; display:inline-block; margin-top:8px;">Read more</span>
         </div>
 
         {news_cards_html}
@@ -2943,21 +3205,103 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
                 {''.join(similar_html_list)}
             </div>
         </div>
+
+        <!-- BOX LEGALE OBBLIGATORIO DI ACCETTAZIONE IMPLICITA DEI TERMINI E POLICY -->
+        <div class="legal-notice-box">
+            <strong>⚖️ Legal Notice, Risk Disclosure & Implicit Acceptance of Terms:</strong><br>
+            By accessing, viewing, or utilizing any data, charts, quotes, or indicators displayed on this page, you expressly acknowledge and agree that your use is subject to the strict and unconditional acceptance of the TradeGPT & VectorDEV <a href="https://tradegpt-vector.com/privacy.html">Privacy Policy</a> and <a href="https://tradegpt-vector.com/docs.html">Terms of Use & API/Data Policies</a>. All market prices, candlestick charts, and AI-generated statistical metrics for <b>{full_name} ({upper_sym})</b> are provided strictly for informational and educational purposes only. They do NOT constitute financial advice, investment recommendations, or an offer to buy or sell any financial instrument. Trading in stocks, cryptocurrencies, forex, and commodities involves a high degree of risk. Automated scraping, unauthorized redistribution, or commercial use of this data is strictly prohibited.
+        </div>
     </div>
+
+    <!-- 4. FOOTER ISTITUZIONALE UNIFICATO -->
+    <footer class="inv-footer">
+        <div class="inv-footer-inner">
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px; padding-bottom:20px; border-bottom:1px solid var(--border-color); margin-bottom:20px;">
+                <div class="brand-box">
+                    <img src="{app_logo_url}" alt="TradeGPT" width="28" height="28">
+                    <span style="font-weight:700; color:#fff; font-size:15px;">TradeGPT by VectorDEV</span>
+                </div>
+                <div style="display:flex; gap:20px; flex-wrap:wrap; font-weight:600; color:var(--text-secondary);">
+                    <a href="https://tradegpt-vector.com/index.html">Markets Home</a>
+                    <a href="https://tradegpt-vector.com/assets/">All 260+ Assets Directory</a>
+                    <a href="https://tradegpt-vector.com/products.html">API & Pricing</a>
+                    <a href="https://tradegpt-vector.com/docs.html">API Documentation</a>
+                    <a href="https://tradegpt-vector.com/about.html">About Us</a>
+                    <a href="https://tradegpt-vector.com/privacy.html">Privacy Policy</a>
+                </div>
+            </div>
+            <div style="color:var(--text-secondary);">
+                © 2026 <b>TradeGPT</b> by VectorDEV. All Rights Reserved. Use of this website constitutes acceptance of our Terms of Use and Privacy Policy.
+            </div>
+        </div>
+    </footer>
 
     <div class="sticky-app-footer">
         <div class="sticky-inner">
             <div>
-                <div style="font-weight:600; font-size:0.9rem; color:#fff;">TradeGPT Financial Analysis</div>
+                <div style="font-weight:700; font-size:0.9rem; color:#fff;">TradeGPT Financial Analysis</div>
                 <div style="font-size:0.76rem; color:var(--text-secondary);">Unlock RSI, MACD, Pivot Points & AI Forecasts for {upper_sym}</div>
             </div>
-            <a href="{play_link}" target="_blank" rel="noopener" class="btn-play-sm" style="padding:7px 16px 7px 8px; font-size:0.85rem;">
-                {play_svg} Google Play
+            <a href="{play_link}" target="_blank" rel="noopener" class="btn-header-play">
+                {play_svg} <span>Google Play</span>
             </a>
         </div>
     </div>
 
     <script>
+        function toggleMobileSidebar(e) {{
+            if (e) e.stopPropagation();
+            const sb = document.getElementById('sidebar');
+            const bd = document.getElementById('sidebarBackdrop');
+            const isOpen = sb.classList.contains('open');
+            sb.classList.toggle('open', !isOpen);
+            bd.classList.toggle('open', !isOpen);
+        }}
+        function closeMobileSidebar() {{
+            document.getElementById('sidebar').classList.remove('open');
+            document.getElementById('sidebarBackdrop').classList.remove('open');
+        }}
+        function toSlug(sym) {{
+            return sym.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+        }}
+
+        const SEARCH_INDEX = {search_index_json};
+        const searchInput = document.getElementById('assetSearchInput');
+        const searchDropdown = document.getElementById('searchDropdown');
+
+        searchInput.addEventListener('input', function() {{
+            const q = this.value.trim().toLowerCase();
+            if (!q) {{ searchDropdown.style.display = 'none'; return; }}
+            const matches = SEARCH_INDEX.filter(arr => arr[0].toLowerCase().includes(q) || arr[1].toLowerCase().includes(q)).slice(0, 8);
+            if (matches.length === 0) {{
+                searchDropdown.innerHTML = `<a href="https://tradegpt-vector.com/assets/" class="search-res-item" style="color:var(--accent-emerald);">Browse all 260+ instruments in Directory →</a>`;
+            }} else {{
+                searchDropdown.innerHTML = matches.map(m => `
+                    <a href="https://tradegpt-vector.com/assets/${{toSlug(m[0])}}.html" class="search-res-item">
+                        <div><b>${{m[0]}}</b> <span style="color:var(--text-secondary); margin-left:6px;">${{m[1]}}</span></div>
+                        <span style="color:var(--accent-emerald); font-size:12px; font-family:'Space Mono',monospace;">Open Chart →</span>
+                    </a>
+                `).join('');
+            }}
+            searchDropdown.style.display = 'block';
+        }});
+
+        searchInput.addEventListener('keydown', function(e) {{
+            if (e.key === 'Enter') {{
+                const q = this.value.trim().toLowerCase();
+                const firstMatch = SEARCH_INDEX.find(a => a[0].toLowerCase() === q) || SEARCH_INDEX.find(a => a[0].toLowerCase().includes(q) || a[1].toLowerCase().includes(q));
+                if (firstMatch) {{
+                    window.location.href = `https://tradegpt-vector.com/assets/${{toSlug(firstMatch[0])}}.html`;
+                }}
+            }}
+        }});
+
+        document.addEventListener('click', function(e) {{
+            if (!searchInput.contains(e.target) && !searchDropdown.contains(e.target)) {{
+                searchDropdown.style.display = 'none';
+            }}
+        }});
+
         const rawData = {chart_json_str};
         const container = document.getElementById('tvchart');
         const totalBars = rawData.length;
@@ -2965,10 +3309,10 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
 
         const chart = LightweightCharts.createChart(container, {{
             layout: {{ background: {{ type: 'solid', color: '#12161f' }}, textColor: '#9ca3af', fontFamily: 'Space Mono, monospace', fontSize: 11 }},
-            grid: {{ vertLines: {{ color: '#1e2430' }}, horzLines: {{ color: '#1e2430' }} }},
-            rightPriceScale: {{ borderColor: '#1e2430' }},
+            grid: {{ vertLines: {{ color: '#1a202e' }}, horzLines: {{ color: '#1a202e' }} }},
+            rightPriceScale: {{ borderColor: '#232a3b' }},
             timeScale: {{
-                borderColor: '#1e2430',
+                borderColor: '#232a3b',
                 fixLeftEdge: true,
                 fixRightEdge: true,
                 minBarSpacing: calcMinSpacing
@@ -3045,10 +3389,124 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
             c_col = "#10b981" if ch >= 0 else "#ef4444"
             gh_l = f"https://raw.githubusercontent.com/pammyhouse/dati-finanziari/main/loghi/{sym}_img.png"
             fmp_l = f"https://financialmodelingprep.com/image-stock/{sym}.png"
-            cards.append(f"<a href='https://tradegpt-vector.com/assets/{sl}.html' style='background:#12161f; padding:12px; border-radius:6px; color:#fff; text-decoration:none; border:1px solid #1e2430; display:flex; align-items:center; justify-content:space-between;'><div style='display:flex; align-items:center; gap:10px;'><img src='{gh_l}' onerror=\"this.onerror=function(){{this.src='{app_logo_url}'}};this.src='{fmp_l}';\" width='32' height='32' style='border-radius:50%; object-fit:cover;'><div><b>{sym}</b><br><small style='color:#9ca3af;'>{fn}</small></div></div><span style='color:{c_col}; font-family:monospace;'>{ch:+.2f}%</span></a>")
-        sec_html.append(f"<h2 style='color:#f3f4f6; font-size:1.1rem; margin-top:28px; border-bottom:1px solid #1e2430; padding-bottom:8px;'>{sec}</h2><div style='display:grid; grid-template-columns:repeat(auto-fill, minmax(250px,1fr)); gap:10px;'>{''.join(cards)}</div>")
+            cards.append(f"<a href='https://tradegpt-vector.com/assets/{sl}.html' style='background:#12161f; padding:12px 14px; border-radius:6px; color:#fff; text-decoration:none; border:1px solid #232a3b; display:flex; align-items:center; justify-content:space-between; transition:border-color 0.15s;'><div style='display:flex; align-items:center; gap:10px; overflow:hidden;'><img src='{gh_l}' onerror=\"this.onerror=function(){{this.src='{app_logo_url}'}};this.src='{fmp_l}';\" width='30' height='30' style='border-radius:50%; object-fit:cover; flex-shrink:0;'><div style='overflow:hidden;'><b>{sym}</b><br><small style='color:#9ca3af; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block;'>{fn}</small></div></div><span style='color:{c_col}; font-family:\"Space Mono\",monospace; font-weight:700; font-size:0.85rem; margin-left:8px;'>{ch:+.2f}%</span></a>")
+        sec_html.append(f"<h2 style='color:#f3f4f6; font-size:1.15rem; font-weight:700; margin-top:32px; border-bottom:1px solid #232a3b; padding-bottom:10px;'>{sec}</h2><div style='display:grid; grid-template-columns:repeat(auto-fill, minmax(250px,1fr)); gap:12px;'>{''.join(cards)}</div>")
 
-    index_assets_html = f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>All 200+ Covered Financial Assets - Live Charts & Quantitative Data | TradeGPT</title><link rel="icon" type="image/png" href="{app_logo_url}"><link rel="canonical" href="https://tradegpt-vector.com/assets/"><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet"></head><body style="background:#0b0e14; color:#fff; font-family:'Inter',sans-serif; padding:25px; max-width:1080px; margin:0 auto;"><a href="https://tradegpt-vector.com/" style="color:#10b981; text-decoration:none; font-weight:600; display:inline-flex; align-items:center; gap:8px;"><img src="{app_logo_url}" width="26" height="26" style="border-radius:6px;"> ← Back to TradeGPT Home</a><h1 style="margin-top:15px; font-size:1.6rem;">TradeGPT Global Markets Directory</h1><p style="color:#9ca3af; font-size:0.9rem;">Select any financial instrument below to inspect interactive historical charts, 52-week ranges, and unlock AI forecasts in the app.</p>{''.join(sec_html)}</body></html>"""
+    # Pagina Directory /assets/index.html con lo stesso Header Orizzontale, Ricerca e Disclaimer Legale
+    index_assets_html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>All 260+ Covered Financial Assets - Live Charts & Quantitative Data | TradeGPT</title>
+    <link rel="icon" type="image/png" href="{app_logo_url}">
+    <meta name="description" content="Browse the complete directory of 260+ global stocks, cryptocurrencies, forex pairs, commodities, and ETFs covered by TradeGPT quantitative AI analysis.">
+    <link rel="canonical" href="https://tradegpt-vector.com/assets/">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        :root {{
+            --bg-body: #0b0e14; --bg-surface: #12161f; --bg-elevated: #181d29; --bg-hover: #1e2534;
+            --border-color: #232a3b; --border-subtle: #1a202e; --text-main: #f3f4f6;
+            --text-secondary: #9ca3af; --text-muted: #6b7280; --accent-emerald: #10b981;
+            --up-green: #10b981; --down-red: #ef4444;
+        }}
+        *, *::before, *::after {{ box-sizing: border-box; }}
+        html, body {{ margin: 0; padding: 0; width: 100%; max-width: 100vw; overflow-x: hidden; background: var(--bg-body); color: var(--text-main); font-family: 'Inter', sans-serif; font-size: 14px; -webkit-font-smoothing: antialiased; }}
+        a {{ color: inherit; text-decoration: none; }}
+        .top-ticker-strip {{ background: #080a0f; border-bottom: 1px solid var(--border-color); height: 36px; display: flex; align-items: center; overflow-x: auto; white-space: nowrap; padding: 0 16px; scrollbar-width: none; }}
+        .top-ticker-strip::-webkit-scrollbar {{ display: none; }}
+        .strip-inner {{ max-width: 1320px; margin: 0 auto; display: flex; align-items: center; gap: 20px; width: 100%; }}
+        .strip-item {{ display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 6px; border-radius: 4px; }}
+        .strip-sym {{ font-weight: 700; color: #fff; }}
+        .strip-price {{ font-family: 'Space Mono', monospace; color: var(--text-secondary); font-size: 11.5px; }}
+        .tape-up {{ font-family: 'Space Mono', monospace; color: var(--up-green); font-weight: 700; font-size: 11.5px; }}
+        .tape-down {{ font-family: 'Space Mono', monospace; color: var(--down-red); font-weight: 700; font-size: 11.5px; }}
+        .strip-dot {{ width: 6px; height: 6px; border-radius: 50%; background: var(--up-green); display: inline-block; }}
+        .inv-header {{ background: var(--bg-surface); border-bottom: 1px solid var(--border-color); position: sticky; top: 0; z-index: 1000; }}
+        .inv-header-top {{ max-width: 1320px; margin: 0 auto; padding: 10px 20px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }}
+        .brand-box {{ display: flex; align-items: center; gap: 10px; flex-shrink: 0; }}
+        .brand-box img {{ width: 34px; height: 34px; border-radius: 7px; object-fit: contain; }}
+        .brand-title {{ font-size: 19px; font-weight: 800; letter-spacing: -0.5px; color: #fff; }}
+        .brand-pro-tag {{ background: var(--accent-emerald); color: #000; font-size: 10px; font-weight: 800; padding: 2px 5px; border-radius: 3px; margin-left: 2px; }}
+        .header-search-wrap {{ flex: 1; max-width: 520px; position: relative; }}
+        .header-search-input {{ width: 100%; height: 38px; background: var(--bg-body); border: 1px solid var(--border-color); border-radius: 6px; padding: 0 14px 0 38px; color: #fff; font-size: 13.5px; outline: none; }}
+        .header-search-input:focus {{ border-color: var(--accent-emerald); }}
+        .header-search-icon {{ position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--text-muted); pointer-events: none; }}
+        .search-results-dropdown {{ position: absolute; top: calc(100% + 4px); left: 0; right: 0; background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 6px; max-height: 320px; overflow-y: auto; z-index: 9999; display: none; box-shadow: 0 12px 32px rgba(0,0,0,0.75); }}
+        .search-res-item {{ display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--border-subtle); font-size: 13px; }}
+        .search-res-item:hover {{ background: var(--bg-hover); }}
+        .btn-header-play {{ display: inline-flex; align-items: center; gap: 8px; background: var(--accent-emerald); color: #000; font-weight: 700; font-size: 12.5px; padding: 7px 14px; border-radius: 6px; flex-shrink: 0; }}
+        .inv-nav-bar {{ background: #0e121a; border-top: 1px solid var(--border-subtle); }}
+        .inv-nav-inner {{ max-width: 1320px; margin: 0 auto; padding: 0 20px; display: flex; align-items: center; justify-content: space-between; height: 40px; overflow-x: auto; white-space: nowrap; scrollbar-width: none; }}
+        .inv-nav-links {{ display: flex; align-items: center; gap: 24px; list-style: none; margin: 0; padding: 0; height: 100%; }}
+        .inv-nav-links li {{ height: 100%; display: flex; align-items: center; }}
+        .inv-nav-links a {{ font-size: 13px; font-weight: 600; color: var(--text-secondary); height: 100%; display: flex; align-items: center; border-bottom: 2px solid transparent; }}
+        .inv-nav-links a:hover, .inv-nav-links a.active {{ color: #fff; border-bottom-color: var(--accent-emerald); }}
+        .legal-notice-box {{ background: rgba(239, 68, 68, 0.05); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: 6px; padding: 18px 20px; margin-top: 36px; color: var(--text-secondary); font-size: 12px; line-height: 1.65; }}
+        .legal-notice-box strong {{ color: #fca5a5; }}
+        .legal-notice-box a {{ color: var(--accent-emerald); text-decoration: underline; }}
+        .inv-footer {{ background: #080a0f; border-top: 1px solid var(--border-color); padding: 32px 20px; margin-top: 36px; color: var(--text-muted); font-size: 12px; }}
+        @media (max-width: 768px) {{ .inv-header-top {{ flex-wrap: wrap; padding: 10px 14px; }} .header-search-wrap {{ order: 3; max-width: 100%; flex: 0 0 100%; }} }}
+    </style>
+</head>
+<body>
+    <div class="top-ticker-strip"><div class="strip-inner">{top_strip_html}</div></div>
+    <header class="inv-header">
+        <div class="inv-header-top">
+            <a href="https://tradegpt-vector.com/" class="brand-box">
+                <img src="{app_logo_url}" alt="TradeGPT">
+                <span class="brand-title">TradeGPT <span class="brand-pro-tag">AI</span></span>
+            </a>
+            <div class="header-search-wrap">
+                <svg class="header-search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                <input type="text" id="assetSearchInput" class="header-search-input" placeholder="Search 260+ stocks, crypto, forex, ETFs..." autocomplete="off">
+                <div class="search-results-dropdown" id="searchDropdown"></div>
+            </div>
+            <a href="https://play.google.com/store/apps/details?id=com.vectordev.einsight&referrer=utm_source%3Dwebsite%26utm_medium%3Ddirectory_header" target="_blank" rel="noopener" class="btn-header-play">{play_svg} <span>Get App (Free)</span></a>
+        </div>
+        <div class="inv-nav-bar">
+            <div class="inv-nav-inner">
+                <ul class="inv-nav-links">
+                    <li><a href="https://tradegpt-vector.com/index.html">Markets Home</a></li>
+                    <li><a href="https://tradegpt-vector.com/assets/" class="active">All 260+ Assets Directory</a></li>
+                    <li><a href="https://tradegpt-vector.com/index.html#hot-assets-section">Smart Rankings</a></li>
+                    <li><a href="https://tradegpt-vector.com/index.html#features-section">Features & Tiers</a></li>
+                    <li><a href="https://tradegpt-vector.com/products.html">API & Pricing</a></li>
+                    <li><a href="https://tradegpt-vector.com/docs.html">Developer Docs</a></li>
+                    <li><a href="https://tradegpt-vector.com/about.html">About Us</a></li>
+                </ul>
+            </div>
+        </div>
+    </header>
+    <main style="max-width:1320px; margin:0 auto; padding:28px 20px;">
+        <h1 style="margin:0 0 8px 0; font-size:1.75rem; font-weight:800;">TradeGPT Global Markets Directory (260+ Assets)</h1>
+        <p style="color:#9ca3af; font-size:0.92rem; margin:0 0 24px 0;">Select any financial instrument below to inspect interactive historical candlestick charts, 52-week ranges, and unlock AI forecasts in the app.</p>
+        {''.join(sec_html)}
+        <div class="legal-notice-box">
+            <strong>⚖️ Legal Notice, Risk Disclosure & Implicit Acceptance of Terms:</strong><br>
+            By accessing or using this directory and any associated market data pages, you expressly agree to be bound by the TradeGPT & VectorDEV <a href="https://tradegpt-vector.com/privacy.html">Privacy Policy</a> and <a href="https://tradegpt-vector.com/docs.html">Terms of Use</a>. All financial quotes, charts, and AI indicators are provided for informational and educational purposes only and do not constitute financial advice.
+        </div>
+    </main>
+    <footer class="inv-footer">
+        <div style="max-width:1320px; margin:0 auto;">
+            © 2026 <b>TradeGPT</b> by VectorDEV. All Rights Reserved.
+        </div>
+    </footer>
+    <script>
+        function toSlug(sym) {{ return sym.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''); }}
+        const SEARCH_INDEX = {search_index_json};
+        const searchInput = document.getElementById('assetSearchInput');
+        const searchDropdown = document.getElementById('searchDropdown');
+        searchInput.addEventListener('input', function() {{
+            const q = this.value.trim().toLowerCase();
+            if (!q) {{ searchDropdown.style.display = 'none'; return; }}
+            const matches = SEARCH_INDEX.filter(arr => arr[0].toLowerCase().includes(q) || arr[1].toLowerCase().includes(q)).slice(0, 8);
+            searchDropdown.innerHTML = matches.map(m => `<a href="https://tradegpt-vector.com/assets/${{toSlug(m[0])}}.html" class="search-res-item"><div><b>${{m[0]}}</b> <span style="color:#9ca3af; margin-left:6px;">${{m[1]}}</span></div><span style="color:#10b981; font-size:12px; font-family:'Space Mono',monospace;">Open Chart →</span></a>`).join('');
+            searchDropdown.style.display = 'block';
+        }});
+    </script>
+</body>
+</html>"""
     r2_manager.write_file(f"{seo_folder}/index.html", index_assets_html, is_json=False)
 
     sitemap_xml = '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' + "\n".join(sitemap_urls) + "\n</urlset>"
@@ -3059,31 +3517,6 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
         ContentType='application/xml; charset=utf-8',
         CacheControl='max-age=3600'
     )
-
-    # --- GENERAZIONE FILE LEGGERO PER LA HOME PAGE (public_seo/home_pulse.json) ---
-    home_tickers = [
-        "NVDA", "TSLA", "AAPL", "MSFT", "GOOGL", "PLTR",
-        "BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD", "BNBUSD", "DOGEUSD",
-        "ISP.MI", "RACE.MI", "UCG.MI", "ENEL.MI", "LDO.MI", "ASML.AS",
-        "EURUSD", "GBPUSD", "USDJPY", "GOLD", "SILVER", "OIL",
-        "SPY", "QQQ", "VOO", "VT", "GLD", "TLT"
-    ]
-    home_quotes = {}
-    for h_sym in home_tickers:
-        df_h = dati_storici_all.get(h_sym)
-        if df_h is None or len(df_h) < 2:
-            continue
-        try:
-            close_s = df_h['Close'].iloc[:, 0] if isinstance(df_h['Close'], pd.DataFrame) else df_h['Close']
-            cp = float(close_s.iloc[-1])
-            pp = float(close_s.iloc[-2])
-            if h_sym in prezzi_live_map and "price" in prezzi_live_map[h_sym]:
-                cp = float(prezzi_live_map[h_sym]["price"])
-                pp = float(prezzi_live_map[h_sym].get("prevClose", pp))
-            chg = ((cp - pp) / pp * 100.0) if pp else 0.0
-            home_quotes[h_sym] = {"p": format_smart_price(cp), "c": round(chg, 2)}
-        except Exception:
-            pass
 
     home_news = []
     for focus_sym in ["NVDA", "BTCUSD", "TSLA", "AAPL", "ISP.MI", "GOLD"]:
