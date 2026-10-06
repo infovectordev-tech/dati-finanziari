@@ -2594,7 +2594,7 @@ def format_smart_price(val):
     except:
         return "0.00"
 
-def format_ smart_oscillator(val):
+def format_smart_oscillator(val):
     try:
         v = float(val)
         if abs(v) >= 10: return f"{v:+.2f}"
