@@ -2569,7 +2569,7 @@ r2_manager.write_file(f"{TARGET_FOLDER}/last_update.json", update_data, is_json=
 
 
 # ==============================================================================
-# 9. GENERATORE PROGRAMMATIC SEO PROFESSIONALE
+# 9. GENERATORE PROGRAMMATIC SEO PROFESSIONALE (CON RSI & MACD REALI + PAYWALL IA)
 # ==============================================================================
 def clean_slug(symbol):
     return re.sub(r'[^a-z0-9]+', '-', symbol.lower()).strip('-')
@@ -2591,6 +2591,15 @@ def format_smart_price(val):
         if v >= 1: return f"{v:.2f}"
         if v >= 0.01: return f"{v:.4f}"
         return f"{v:.6f}"
+    except:
+        return "0.00"
+
+def format_ smart_oscillator(val):
+    try:
+        v = float(val)
+        if abs(v) >= 10: return f"{v:+.2f}"
+        if abs(v) >= 0.1: return f"{v:+.3f}"
+        return f"{v:+.5f}"
     except:
         return "0.00"
 
@@ -2713,6 +2722,7 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
 
             curr_price = float(close_s.iloc[-1])
             prev_price = float(close_s.iloc[-2]) if len(close_s) >= 2 else curr_price
+            open_price = float(open_s.iloc[-1]) if pd.notna(open_s.iloc[-1]) else prev_price
 
             live_obj = prezzi_live_map.get(sym, {})
             if live_obj and "price" in live_obj:
@@ -2722,6 +2732,55 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
             abs_change = curr_price - prev_price
             pct_change = ((abs_change / prev_price) * 100.0) if prev_price else 0.0
             week_change = crescita_settimanale.get(sym, 0.0)
+
+            # --- CALCOLO MATEMATICO PURO DI RSI (14), MACD (12, 26, 9) E VOLATILITÀ (30D) ---
+            try:
+                c_clean = close_s.dropna().astype(float)
+                # 1. RSI (14) con Wilder's Smoothing
+                delta_c = c_clean.diff()
+                up_c = delta_c.clip(lower=0)
+                down_c = -1 * delta_c.clip(upper=0)
+                ma_up = up_c.ewm(com=13, adjust=False).mean()
+                ma_down = down_c.ewm(com=13, adjust=False).mean()
+                rs_ratio = ma_up / ma_down
+                rsi_series = 100.0 - (100.0 / (1.0 + rs_ratio))
+                rsi_val = float(rsi_series.iloc[-1]) if pd.notna(rsi_series.iloc[-1]) else 50.0
+                rsi_val = max(1.0, min(99.0, rsi_val))
+            except Exception:
+                rsi_val = 50.0
+
+            rsi_bar_pos = int(max(4, min(96, round(rsi_val))))
+            if rsi_val >= 70.0:
+                rsi_zone_txt = "Overbought Zone (>70)"
+                rsi_zone_col = "#f59e0b"
+            elif rsi_val <= 30.0:
+                rsi_zone_txt = "Oversold Zone (<30)"
+                rsi_zone_col = "#38bdf8"
+            else:
+                rsi_zone_txt = "Neutral Zone (30–70)"
+                rsi_zone_col = "#10b981"
+
+            try:
+                # 2. MACD (12, 26, 9)
+                ema12 = c_clean.ewm(span=12, adjust=False).mean()
+                ema26 = c_clean.ewm(span=26, adjust=False).mean()
+                macd_line_s = ema12 - ema26
+                macd_sig_s = macd_line_s.ewm(span=9, adjust=False).mean()
+                macd_hist_s = macd_line_s - macd_sig_s
+                macd_val = float(macd_line_s.iloc[-1]) if pd.notna(macd_line_s.iloc[-1]) else 0.0
+                macd_sig = float(macd_sig_s.iloc[-1]) if pd.notna(macd_sig_s.iloc[-1]) else 0.0
+                macd_hist = float(macd_hist_s.iloc[-1]) if pd.notna(macd_hist_s.iloc[-1]) else 0.0
+            except Exception:
+                macd_val, macd_sig, macd_hist = 0.0, 0.0, 0.0
+
+            macd_hist_col = "#10b981" if macd_hist >= 0 else "#ef4444"
+
+            try:
+                # 3. Volatilità Storica Annualizzata (30D)
+                ret_s = c_clean.pct_change().dropna().tail(30)
+                hv30_val = float(ret_s.std() * (252 ** 0.5) * 100.0) if len(ret_s) >= 5 else 18.5
+            except Exception:
+                hv30_val = 18.5
 
             is_open = live_obj.get("isOpen", False)
             status_html = "Market Open" if is_open else "At close"
@@ -2818,9 +2877,9 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{upper_sym} ({full_name}) Live Chart, Price & Quantitative Analysis | TradeGPT</title>
+    <title>{upper_sym} ({full_name}) Live Chart, RSI, MACD & Price Analysis | TradeGPT</title>
     <link rel="icon" type="image/png" href="{app_logo_url}">
-    <meta name="description" content="{full_name} ({upper_sym}) live interactive candlestick chart, current price ({format_smart_price(curr_price)}), 52-week range, and institutional volume data on TradeGPT.">
+    <meta name="description" content="{full_name} ({upper_sym}) live interactive candlestick chart, current price ({format_smart_price(curr_price)}), RSI(14) at {rsi_val:.1f}, MACD({format_smart_oscillator(macd_val)}), 52-week range, and volume data on TradeGPT.">
     <meta name="robots" content="index, follow">
     <link rel="canonical" href="https://tradegpt-vector.com/assets/{slug}.html">
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -2913,20 +2972,60 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
         .quick-sublinks a {{ color: var(--text-muted); padding: 2px 8px; border-radius: 4px; background: rgba(255,255,255,0.03); border: 1px solid var(--border-subtle); }}
         .quick-sublinks a:hover {{ color: #fff; border-color: var(--border-color); }}
 
-        /* --- 3. STILI PAGINA TICKER --- */
+        /* --- 3. STILI PAGINA TICKER ARRICCHITA --- */
         .container {{ max-width: 1060px; margin: 0 auto; padding: 24px 20px; }}
         .breadcrumb-bar {{ font-size: 12px; color: var(--text-muted); margin-bottom: 14px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }}
         .breadcrumb-bar a {{ color: var(--accent-emerald); font-weight: 600; }}
-        .instrument-header {{ display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: 18px; border-bottom: 1px solid var(--border-color); margin-bottom: 18px; }}
+        .instrument-header {{ display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: 18px; border-bottom: 1px solid var(--border-color); margin-bottom: 18px; flex-wrap: wrap; gap: 14px; }}
         .instrument-id {{ display: flex; align-items: center; gap: 14px; }}
-        .instrument-logo {{ width: 46px; height: 46px; border-radius: 50%; object-fit: cover; background: var(--bg-elevated); border: 1px solid var(--border-color); }}
+        .instrument-logo {{ width: 48px; height: 48px; border-radius: 50%; object-fit: cover; background: var(--bg-elevated); border: 1px solid var(--border-color); }}
         .quote-price {{ font-family: 'Space Mono', monospace; font-size: 2.35rem; font-weight: 700; color: #fff; line-height: 1; }}
         .quote-stats {{ font-family: 'Space Mono', monospace; font-size: 0.88rem; margin-top: 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }}
         
-        .chart-panel {{ background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 6px; padding: 16px; margin-bottom: 20px; }}
+        .chart-panel {{ background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 6px; padding: 16px; margin-bottom: 18px; }}
         .chart-toolbar {{ display: flex; justify-content: space-between; align-items: center; padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--border-subtle); }}
         .chart-toggle-btn {{ background: var(--bg-elevated); border: 1px solid var(--border-color); color: var(--text-main); width: 34px; height: 34px; border-radius: 6px; display: flex; align-items: center; justify-content: center; cursor: pointer; }}
         #tvchart {{ width: 100%; height: 390px; }}
+
+        /* Griglia 8 Statistiche Chiave (Sessione & Storico) */
+        .key-stats-grid {{
+            display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 20px;
+        }}
+        .stat-cell {{
+            background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 6px; padding: 11px 14px;
+        }}
+        .stat-lbl {{ font-size: 11.5px; color: var(--text-muted); text-transform: uppercase; font-weight: 600; margin-bottom: 4px; }}
+        .stat-val {{ font-family: 'Space Mono', monospace; font-size: 14px; font-weight: 700; color: #fff; }}
+
+        /* Doppia Card Indicatori Reali (RSI 14 & MACD) */
+        .tech-snapshot-grid {{
+            display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 20px;
+        }}
+        .tech-card {{
+            background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 6px; padding: 18px 20px; display: flex; flex-direction: column; justify-content: space-between;
+        }}
+        .tech-card-head {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }}
+        .tech-card-title {{ font-size: 13.5px; font-weight: 700; color: #fff; text-transform: uppercase; letter-spacing: 0.3px; }}
+        .tech-big-num {{ font-family: 'Space Mono', monospace; font-size: 1.75rem; font-weight: 700; color: #fff; line-height: 1.1; }}
+        .rsi-gauge-track {{
+            width: 100%; height: 7px; border-radius: 4px; margin: 14px 0 6px 0; position: relative;
+            background: linear-gradient(90deg, #38bdf8 0%, #38bdf8 30%, #10b981 30%, #10b981 70%, #f59e0b 70%, #ef4444 100%);
+        }}
+        .rsi-gauge-thumb {{
+            position: absolute; top: -4px; width: 14px; height: 14px; border-radius: 50%;
+            background: #fff; border: 3px solid #0b0e14; transform: translateX(-50%); box-shadow: 0 0 6px rgba(255,255,255,0.8);
+        }}
+        .rsi-scale-labels {{ display: flex; justify-content: space-between; font-family: 'Space Mono', monospace; font-size: 10.5px; color: var(--text-muted); margin-bottom: 12px; }}
+        .tech-lock-footer {{
+            margin-top: auto; padding-top: 12px; border-top: 1px solid var(--border-subtle);
+            display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: var(--text-secondary);
+        }}
+        .lock-pill-cta {{
+            display: inline-flex; align-items: center; gap: 5px; background: rgba(245,158,11,0.12);
+            border: 1px solid rgba(245,158,11,0.35); color: var(--accent-orange); padding: 4px 10px;
+            border-radius: 4px; font-family: 'Space Mono', monospace; font-size: 11px; font-weight: 700;
+        }}
+        .lock-pill-cta:hover {{ background: rgba(245,158,11,0.22); }}
 
         .tools-bar {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; }}
         .tool-btn {{ background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 6px; padding: 12px 14px; color: var(--text-main); font-size: 0.85rem; font-weight: 600; display: flex; align-items: center; justify-content: space-between; transition: border-color 0.15s; }}
@@ -2946,7 +3045,7 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
         .paywall-table th, .paywall-table td {{ padding: 12px 16px; text-align: left; border-bottom: 1px solid var(--border-subtle); }}
         .paywall-table th {{ color: var(--text-muted); font-weight: 600; font-size: 11.5px; text-transform: uppercase; }}
         .blurred-val {{ filter: blur(6px); user-select: none; font-family: 'Space Mono', monospace; color: var(--text-main); }}
-        .paywall-cta-banner {{ background: linear-gradient(180deg, rgba(18,22,31,0.4) 0%, rgba(18,22,31,0.98) 35%, #12161f 100%); padding: 36px 20px 24px 20px; text-align: center; margin-top: -90px; position: relative; z-index: 5; }}
+        .paywall-cta-banner {{ background: linear-gradient(180deg, rgba(18,22,31,0.35) 0%, rgba(18,22,31,0.96) 35%, #12161f 100%); padding: 38px 20px 24px 20px; text-align: center; margin-top: -92px; position: relative; z-index: 5; }}
         .btn-google-play {{ display: inline-flex; align-items: center; gap: 10px; background: var(--accent-emerald); color: #000; font-weight: 700; font-size: 0.92rem; padding: 10px 22px 10px 12px; border-radius: 6px; margin-top: 12px; }}
 
         /* Disclaimer Legale Rigoroso & Accettazione Implicita */
@@ -2979,6 +3078,8 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
             .inv-header-top {{ flex-wrap: wrap; padding: 10px 14px; gap: 10px; }}
             .header-search-wrap {{ order: 3; max-width: 100%; width: 100%; flex: 0 0 100%; }}
             .inv-nav-bar {{ display: none; }}
+            .key-stats-grid {{ grid-template-columns: repeat(2, 1fr); }}
+            .tech-snapshot-grid {{ grid-template-columns: 1fr; }}
             .tools-bar {{ grid-template-columns: 1fr; }}
             .quote-price {{ font-size: 1.9rem; }}
             #tvchart {{ height: 300px; }}
@@ -3021,7 +3122,7 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
         </div>
     </aside>
 
-    <!-- 2. HEADER ORIZZONTALE UNIFICATO (IDENTICO A INDEX.HTML) -->
+    <!-- 2. HEADER ORIZZONTALE UNIFICATO -->
     <header class="inv-header">
         <div class="inv-header-top">
             <div style="display:flex; align-items:center; gap:12px;">
@@ -3083,8 +3184,14 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
                 <img src="{gh_logo}" onerror="this.onerror=function(){{this.src='{app_logo_url}'}};this.src='{fmp_logo}';" alt="{upper_sym}" class="instrument-logo">
                 <div>
                     <h1 style="font-size:1.45rem; font-weight:800; margin:0; color:#fff; letter-spacing:-0.3px;">{full_name} ({upper_sym})</h1>
-                    <p style="font-size:0.82rem; color:var(--text-secondary); margin:4px 0 0 0;">{sector_clean} • Quantitative Market Data & AI Analytics</p>
+                    <p style="font-size:0.82rem; color:var(--text-secondary); margin:4px 0 0 0;">{sector_clean} • Real-Time Price, RSI, MACD & Quantitative Data</p>
                 </div>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center;">
+                <span style="background:var(--bg-surface); border:1px solid var(--border-color); padding:5px 10px; border-radius:4px; font-family:'Space Mono',monospace; font-size:12px;">
+                    RSI(14): <b style="color:{rsi_zone_col};">{rsi_val:.1f}</b>
+                </span>
+                <a href="{play_link}" target="_blank" class="lock-pill-cta">🔒 AI Forecast in App</a>
             </div>
         </div>
 
@@ -3102,7 +3209,7 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
 
         <div class="chart-panel">
             <div class="chart-toolbar">
-                <span style="font-size:0.8rem; font-weight:700; color:var(--text-secondary); text-transform:uppercase;">{upper_sym} Interactive Historical Chart</span>
+                <span style="font-size:0.8rem; font-weight:700; color:var(--text-secondary); text-transform:uppercase;">{upper_sym} Interactive Historical Chart (1Y Daily)</span>
                 <button class="chart-toggle-btn" onclick="toggleChartType()" title="Toggle Candlestick / Line Chart" aria-label="Toggle Chart Type">
                     <svg id="iconLine" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"></polyline><polyline points="16 7 22 7 22 13"></polyline></svg>
                     <svg id="iconCandle" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;"><line x1="7" y1="3" x2="7" y2="21"></line><rect x="4" y="7" width="6" height="9" rx="1" fill="currentColor"></rect><line x1="17" y1="4" x2="17" y2="20"></line><rect x="14" y="9" width="6" height="7" rx="1"></rect></svg>
@@ -3112,6 +3219,93 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
             <div style="font-size:0.72rem; color:var(--text-muted); margin-top:10px; display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px;">
                 <span>Market data is provided for informational and educational purposes only.</span>
                 <span>Drag or pinch to inspect historical candles</span>
+            </div>
+        </div>
+
+        <!-- NUOVA GRIGLIA 8 STATISTICHE CHIAVE DI SESSIONE -->
+        <div class="key-stats-grid">
+            <div class="stat-cell">
+                <div class="stat-lbl">Open</div>
+                <div class="stat-val">{format_smart_price(open_price)}</div>
+            </div>
+            <div class="stat-cell">
+                <div class="stat-lbl">Prev. Close</div>
+                <div class="stat-val">{format_smart_price(prev_price)}</div>
+            </div>
+            <div class="stat-cell">
+                <div class="stat-lbl">Day High</div>
+                <div class="stat-val">{format_smart_price(d_max)}</div>
+            </div>
+            <div class="stat-cell">
+                <div class="stat-lbl">Day Low</div>
+                <div class="stat-val">{format_smart_price(d_min)}</div>
+            </div>
+            <div class="stat-cell">
+                <div class="stat-lbl">52-Week High</div>
+                <div class="stat-val">{format_smart_price(h_max)}</div>
+            </div>
+            <div class="stat-cell">
+                <div class="stat-lbl">52-Week Low</div>
+                <div class="stat-val">{format_smart_price(h_min)}</div>
+            </div>
+            <div class="stat-cell">
+                <div class="stat-lbl">Session Volume</div>
+                <div class="stat-val">{format_compact_vol(curr_vol)}</div>
+            </div>
+            <div class="stat-cell">
+                <div class="stat-lbl">30D Volatility (HV)</div>
+                <div class="stat-val">{hv30_val:.1f}%</div>
+            </div>
+        </div>
+
+        <!-- NUOVE CARD GEMELLE CON IL PURO VALORE DI RSI (14) E MACD (12,26,9) + ANALISI IA BLOCCATA -->
+        <div class="tech-snapshot-grid">
+            <!-- Card 1: RSI (14) -->
+            <div class="tech-card">
+                <div>
+                    <div class="tech-card-head">
+                        <span class="tech-card-title">{upper_sym} Relative Strength Index (RSI 14)</span>
+                        <span style="font-size:11.5px; font-weight:700; color:{rsi_zone_col};">{rsi_zone_txt}</span>
+                    </div>
+                    <div class="tech-big-num">{rsi_val:.2f}</div>
+                    <div class="rsi-gauge-track">
+                        <div class="rsi-gauge-thumb" style="left:{rsi_bar_pos}%;"></div>
+                    </div>
+                    <div class="rsi-scale-labels">
+                        <span>0 (Oversold &lt;30)</span>
+                        <span>50 (Neutral)</span>
+                        <span>100 (Overbought &gt;70)</span>
+                    </div>
+                </div>
+                <div class="tech-lock-footer">
+                    <span>AI Divergence & Entry Signal:</span>
+                    <a href="{play_link}" target="_blank" class="lock-pill-cta">🔒 Unlock AI Analysis in App</a>
+                </div>
+            </div>
+
+            <!-- Card 2: MACD (12, 26, 9) -->
+            <div class="tech-card">
+                <div>
+                    <div class="tech-card-head">
+                        <span class="tech-card-title">{upper_sym} MACD (12, 26, 9) Level</span>
+                        <span style="font-size:11.5px; font-weight:600; color:var(--text-secondary);">Daily Oscillator</span>
+                    </div>
+                    <div class="tech-big-num">{format_smart_oscillator(macd_val)}</div>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:14px 0 12px 0; background:var(--bg-body); border:1px solid var(--border-subtle); border-radius:6px; padding:10px 12px;">
+                        <div>
+                            <div style="font-size:11px; color:var(--text-muted);">Signal Line (9)</div>
+                            <div style="font-family:'Space Mono',monospace; font-weight:700; font-size:13px; color:#fff; margin-top:2px;">{format_smart_oscillator(macd_sig)}</div>
+                        </div>
+                        <div>
+                            <div style="font-size:11px; color:var(--text-muted);">MACD Histogram</div>
+                            <div style="font-family:'Space Mono',monospace; font-weight:700; font-size:13px; color:{macd_hist_col}; margin-top:2px;">{format_smart_oscillator(macd_hist)}</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="tech-lock-footer">
+                    <span>AI Momentum & Crossover Verdict:</span>
+                    <a href="{play_link}" target="_blank" class="lock-pill-cta">🔒 Unlock AI Analysis in App</a>
+                </div>
             </div>
         </div>
 
@@ -3161,27 +3355,48 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
             </div>
         </div>
 
+        <!-- TABELLA RIEPILOGO: RSI E MACD VISIBILI SOLO COME NUMERO, INTERPRETAZIONE E PROIEZIONI IA SFOCATE -->
         <div class="paywall-panel">
             <div style="padding:16px 20px; border-bottom:1px solid var(--border-subtle); display:flex; justify-content:space-between; align-items:center;">
                 <span style="font-weight:700; font-size:0.95rem; color:#fff;">Quantitative Technical Ratings & AI Signals ({upper_sym})</span>
-                <span style="font-size:0.75rem; color:var(--accent-emerald); font-family:'Space Mono',monospace; font-weight:700;">LIVE IN APP</span>
+                <span style="font-size:0.75rem; color:var(--accent-emerald); font-family:'Space Mono',monospace; font-weight:700;">PREMIUM / ULTRA IN APP</span>
             </div>
             <table class="paywall-table">
                 <thead>
-                    <tr><th>Metric / Indicator</th><th>Value</th><th>Signal</th></tr>
+                    <tr><th>Metric / Indicator</th><th>Current Reading</th><th>AI Action Verdict</th></tr>
                 </thead>
                 <tbody>
-                    <tr><td>AI Hybrid Probability Score</td><td class="blurred-val">84.6%</td><td class="blurred-val" style="color:var(--accent-emerald);">STRONG BUY</td></tr>
-                    <tr><td>RSI (14) & Stochastic %K</td><td class="blurred-val">62.4 / 71.2</td><td class="blurred-val">Bullish</td></tr>
-                    <tr><td>MACD (12, 26, 9) & EMA (10)</td><td class="blurred-val">+2.45 / 308.10</td><td class="blurred-val">Buy</td></tr>
-                    <tr><td>AI News Sentiment & Momentum</td><td class="blurred-val">76.0 / 100</td><td class="blurred-val">Positive</td></tr>
-                    <tr><td>30-Day Statistical Target Range</td><td class="blurred-val">295.00 - 348.50</td><td class="blurred-val">High Confidence</td></tr>
+                    <tr>
+                        <td><b>RSI (14)</b> Relative Strength</td>
+                        <td style="font-family:'Space Mono',monospace; font-weight:700; color:#fff;">{rsi_val:.2f}</td>
+                        <td><a href="{play_link}" target="_blank" class="lock-pill-cta">🔒 Unlock AI Verdict</a></td>
+                    </tr>
+                    <tr>
+                        <td><b>MACD (12, 26, 9)</b> Level / Signal</td>
+                        <td style="font-family:'Space Mono',monospace; font-weight:700; color:#fff;">{format_smart_oscillator(macd_val)} / {format_smart_oscillator(macd_sig)}</td>
+                        <td><a href="{play_link}" target="_blank" class="lock-pill-cta">🔒 Unlock AI Verdict</a></td>
+                    </tr>
+                    <tr>
+                        <td>Bollinger Bands (20, 2) & EMA (50/200)</td>
+                        <td class="blurred-val">{format_smart_price(curr_price * 0.96)} - {format_smart_price(curr_price * 1.04)}</td>
+                        <td class="blurred-val" style="color:var(--accent-emerald);">BULLISH TREND</td>
+                    </tr>
+                    <tr>
+                        <td>AI News Sentiment & Momentum Score</td>
+                        <td class="blurred-val">82.5 / 100</td>
+                        <td class="blurred-val">High Accumulation</td>
+                    </tr>
+                    <tr>
+                        <td>AI Hybrid Probability & 30D Target Range</td>
+                        <td class="blurred-val">{format_smart_price(curr_price * 0.94)} - {format_smart_price(curr_price * 1.12)}</td>
+                        <td class="blurred-val" style="color:var(--accent-emerald);">STRONG BUY</td>
+                    </tr>
                 </tbody>
             </table>
             <div class="paywall-cta-banner">
-                <h3 style="margin:0 0 6px 0; font-size:1.15rem; color:#fff;">Access Full {upper_sym} Technical Indicators & AI Forecasts</h3>
-                <p style="margin:0 auto; color:var(--text-secondary); max-width:520px; font-size:0.86rem; line-height:1.5;">
-                    Real-time RSI, MACD, Bollinger Bands, sentiment gauges, executive insider trades, and 30-day price projections for <b>{full_name}</b> are available free on the <b>TradeGPT</b> Android app.
+                <h3 style="margin:0 0 6px 0; font-size:1.15rem; color:#fff;">Unlock Full AI Analysis & Statistical Projections for {upper_sym}</h3>
+                <p style="margin:0 auto; color:var(--text-secondary); max-width:540px; font-size:0.86rem; line-height:1.5;">
+                    You are viewing raw RSI ({rsi_val:.1f}) and MACD ({format_smart_oscillator(macd_val)}) readings. To unlock AI interpretation, Bullish/Bearish ratings, Bollinger Bands, Executive Insider Trades, and 30-Day Statistical Trend Charts for <b>{full_name}</b>, download the <b>TradeGPT</b> Android app.
                 </p>
                 <a href="{play_link}" target="_blank" rel="noopener" class="btn-google-play">
                     {play_svg} Download on Google Play
@@ -3209,7 +3424,7 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
         <!-- BOX LEGALE OBBLIGATORIO DI ACCETTAZIONE IMPLICITA DEI TERMINI E POLICY -->
         <div class="legal-notice-box">
             <strong>⚖️ Legal Notice, Risk Disclosure & Implicit Acceptance of Terms:</strong><br>
-            By accessing, viewing, or utilizing any data, charts, quotes, or indicators displayed on this page, you expressly acknowledge and agree that your use is subject to the strict and unconditional acceptance of the TradeGPT & VectorDEV <a href="https://tradegpt-vector.com/privacy.html">Privacy Policy</a> and <a href="https://tradegpt-vector.com/docs.html">Terms of Use & API/Data Policies</a>. All market prices, candlestick charts, and AI-generated statistical metrics for <b>{full_name} ({upper_sym})</b> are provided strictly for informational and educational purposes only. They do NOT constitute financial advice, investment recommendations, or an offer to buy or sell any financial instrument. Trading in stocks, cryptocurrencies, forex, and commodities involves a high degree of risk. Automated scraping, unauthorized redistribution, or commercial use of this data is strictly prohibited.
+            By accessing, viewing, or utilizing any data, charts, quotes, or indicators displayed on this page, you expressly acknowledge and agree that your use is subject to the strict and unconditional acceptance of the TradeGPT & VectorDEV <a href="https://tradegpt-vector.com/privacy.html">Privacy Policy</a> and <a href="https://tradegpt-vector.com/docs.html">Terms of Use & API/Data Policies</a>. All market prices, candlestick charts, RSI, MACD, and AI-generated statistical metrics for <b>{full_name} ({upper_sym})</b> are provided strictly for informational and educational purposes only. They do NOT constitute financial advice, investment recommendations, or an offer to buy or sell any financial instrument. Trading in stocks, cryptocurrencies, forex, and commodities involves a high degree of risk. Automated scraping, unauthorized redistribution, or commercial use of this data is strictly prohibited.
         </div>
     </div>
 
@@ -3240,7 +3455,7 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
         <div class="sticky-inner">
             <div>
                 <div style="font-weight:700; font-size:0.9rem; color:#fff;">TradeGPT Financial Analysis</div>
-                <div style="font-size:0.76rem; color:var(--text-secondary);">Unlock RSI, MACD, Pivot Points & AI Forecasts for {upper_sym}</div>
+                <div style="font-size:0.76rem; color:var(--text-secondary);">Unlock AI Signal for {upper_sym} (RSI: {rsi_val:.1f} • MACD: {format_smart_oscillator(macd_val)})</div>
             </div>
             <a href="{play_link}" target="_blank" rel="noopener" class="btn-header-play">
                 {play_svg} <span>Google Play</span>
@@ -3480,7 +3695,7 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
     </header>
     <main style="max-width:1320px; margin:0 auto; padding:28px 20px;">
         <h1 style="margin:0 0 8px 0; font-size:1.75rem; font-weight:800;">TradeGPT Global Markets Directory (260+ Assets)</h1>
-        <p style="color:#9ca3af; font-size:0.92rem; margin:0 0 24px 0;">Select any financial instrument below to inspect interactive historical candlestick charts, 52-week ranges, and unlock AI forecasts in the app.</p>
+        <p style="color:#9ca3af; font-size:0.92rem; margin:0 0 24px 0;">Select any financial instrument below to inspect interactive historical candlestick charts, RSI(14), MACD, 52-week ranges, and unlock AI forecasts in the app.</p>
         {''.join(sec_html)}
         <div class="legal-notice-box">
             <strong>⚖️ Legal Notice, Risk Disclosure & Implicit Acceptance of Terms:</strong><br>
