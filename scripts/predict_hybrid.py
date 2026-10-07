@@ -2569,7 +2569,7 @@ r2_manager.write_file(f"{TARGET_FOLDER}/last_update.json", update_data, is_json=
 
 
 # ==============================================================================
-# 9. GENERATORE PROGRAMMATIC SEO PROFESSIONALE (CON RSI & MACD REALI + PAYWALL IA)
+# 9. GENERATORE PROGRAMMATIC SEO PROFESSIONALE (FIX BADGE & LEGAL COMPLIANCE)
 # ==============================================================================
 def clean_slug(symbol):
     return re.sub(r'[^a-z0-9]+', '-', symbol.lower()).strip('-')
@@ -2604,12 +2604,11 @@ def format_smart_oscillator(val):
         return "0.00"
 
 def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, news_by_symbol):
-    print("Avvio generazione 260+ pagine SEO professionali stile Investing.com...")
+    print("Avvio generazione 260+ pagine SEO professionali e compliance...")
     seo_folder = "public_seo/assets"
     today_iso = datetime.utcnow().strftime("%Y-%m-%d")
     app_logo_url = "https://tradegpt-vector.com/tradeGPT_glass_logo.png"
     
-    # Vero logo ufficiale a 4 colori del Google Play Store in un badge bianco arrotondato
     play_svg = '<span style="background:#ffffff; width:20px; height:20px; border-radius:4px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; box-shadow:0 1px 3px rgba(0,0,0,0.2);"><img src="https://upload.wikimedia.org/wikipedia/commons/d/d0/Google_Play_Arrow_logo.svg" alt="Google Play" width="13" height="13" style="display:block;"></span>'
     
     prezzi_live_root = r2_manager.read_json("prezzi.json")
@@ -2617,7 +2616,6 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
 
     all_valid_syms = [s for s in dati_storici_all.keys() if dati_storici_all[s] is not None and len(dati_storici_all[s]) >= 10]
 
-    # Pre-calcolo quotes per la Top Ticker Strip e per home_pulse.json
     home_tickers = [
         "NVDA", "TSLA", "AAPL", "MSFT", "GOOGL", "PLTR",
         "BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD", "BNBUSD", "DOGEUSD",
@@ -2642,17 +2640,10 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
         except Exception:
             pass
 
-    # Costruzione HTML statico della Top Ticker Strip (già popolata coi numeri veri, zero fetch extra!)
     strip_tickers = [
-        ("NVDA", "NVDA", "nvda"),
-        ("BTCUSD", "BTC/USD", "btcusd"),
-        ("TSLA", "TSLA", "tsla"),
-        ("EURUSD", "EUR/USD", "eurusd"),
-        ("GOLD", "GOLD", "gold"),
-        ("ISP.MI", "ISP.MI", "isp-mi"),
-        ("RACE.MI", "RACE.MI", "race-mi"),
-        ("AAPL", "AAPL", "aapl"),
-        ("SPY", "S&P 500 ETF", "spy")
+        ("NVDA", "NVDA", "nvda"), ("BTCUSD", "BTC/USD", "btcusd"), ("TSLA", "TSLA", "tsla"),
+        ("EURUSD", "EUR/USD", "eurusd"), ("GOLD", "GOLD", "gold"), ("ISP.MI", "ISP.MI", "isp-mi"),
+        ("RACE.MI", "RACE.MI", "race-mi"), ("AAPL", "AAPL", "aapl"), ("SPY", "S&P 500 ETF", "spy")
     ]
     strip_items_html = []
     for s_key, s_label, s_slug in strip_tickers:
@@ -2673,7 +2664,6 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
         )
     top_strip_html = "\n            ".join(strip_items_html)
 
-    # Indice di ricerca completo per la barra di ricerca nell'header di tutte le pagine asset
     search_index_list = []
     for s_sym in all_valid_syms:
         s_up = s_sym.upper()
@@ -2733,10 +2723,9 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
             pct_change = ((abs_change / prev_price) * 100.0) if prev_price else 0.0
             week_change = crescita_settimanale.get(sym, 0.0)
 
-            # --- CALCOLO MATEMATICO PURO DI RSI (14), MACD (12, 26, 9) E VOLATILITÀ (30D) ---
+            # CALCOLO MATEMATICO PURO (RSI, MACD, VOLATILITÀ)
             try:
                 c_clean = close_s.dropna().astype(float)
-                # 1. RSI (14) con Wilder's Smoothing
                 delta_c = c_clean.diff()
                 up_c = delta_c.clip(lower=0)
                 down_c = -1 * delta_c.clip(upper=0)
@@ -2751,17 +2740,16 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
 
             rsi_bar_pos = int(max(4, min(96, round(rsi_val))))
             if rsi_val >= 70.0:
-                rsi_zone_txt = "Overbought Zone (>70)"
+                rsi_zone_txt = "Overbought (>70)"
                 rsi_zone_col = "#f59e0b"
             elif rsi_val <= 30.0:
-                rsi_zone_txt = "Oversold Zone (<30)"
+                rsi_zone_txt = "Oversold (<30)"
                 rsi_zone_col = "#38bdf8"
             else:
-                rsi_zone_txt = "Neutral Zone (30–70)"
+                rsi_zone_txt = "Neutral Zone (30-70)"
                 rsi_zone_col = "#10b981"
 
             try:
-                # 2. MACD (12, 26, 9)
                 ema12 = c_clean.ewm(span=12, adjust=False).mean()
                 ema26 = c_clean.ewm(span=26, adjust=False).mean()
                 macd_line_s = ema12 - ema26
@@ -2776,14 +2764,13 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
             macd_hist_col = "#10b981" if macd_hist >= 0 else "#ef4444"
 
             try:
-                # 3. Volatilità Storica Annualizzata (30D)
                 ret_s = c_clean.pct_change().dropna().tail(30)
                 hv30_val = float(ret_s.std() * (252 ** 0.5) * 100.0) if len(ret_s) >= 5 else 18.5
             except Exception:
                 hv30_val = 18.5
 
             is_open = live_obj.get("isOpen", False)
-            status_html = "Market Open" if is_open else "At close"
+            status_html = "Latest Active Session" if is_open else "Delayed Data / EOD"
             
             ext_html = ""
             if not is_open:
@@ -2791,12 +2778,7 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
                     ep = float(live_obj["postMarketPrice"])
                     ec = float(live_obj["postMarketChangePct"])
                     ecol = "#10b981" if ec >= 0 else "#ef4444"
-                    ext_html = f"<div style='font-family:\"Space Mono\",monospace; font-size:0.84rem; margin-top:6px; color:#9ca3af;'>Post-market: <span style='color:{ecol};'>{format_smart_price(ep)} ({ec:+.2f}%)</span></div>"
-                elif live_obj.get("preMarketPrice") and live_obj.get("preMarketChangePct") is not None:
-                    ep = float(live_obj["preMarketPrice"])
-                    ec = float(live_obj["preMarketChangePct"])
-                    ecol = "#10b981" if ec >= 0 else "#ef4444"
-                    ext_html = f"<div style='font-family:\"Space Mono\",monospace; font-size:0.84rem; margin-top:6px; color:#9ca3af;'>Pre-market: <span style='color:{ecol};'>{format_smart_price(ep)} ({ec:+.2f}%)</span></div>"
+                    ext_html = f"<div style='font-family:\"Space Mono\",monospace; font-size:0.84rem; margin-top:6px; color:#9ca3af;'>Post-market indication: <span style='color:{ecol};'>{format_smart_price(ep)} ({ec:+.2f}%)</span></div>"
 
             d_min = float(low_s.iloc[-1])
             d_max = float(high_s.iloc[-1])
@@ -2877,9 +2859,9 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{upper_sym} ({full_name}) Live Chart, RSI, MACD & Price Analysis | TradeGPT</title>
+    <title>{upper_sym} ({full_name}) Historical Chart, RSI, MACD & Quantitative Analysis | TradeGPT</title>
     <link rel="icon" type="image/png" href="{app_logo_url}">
-    <meta name="description" content="{full_name} ({upper_sym}) live interactive candlestick chart, current price ({format_smart_price(curr_price)}), RSI(14) at {rsi_val:.1f}, MACD({format_smart_oscillator(macd_val)}), 52-week range, and volume data on TradeGPT.">
+    <meta name="description" content="{full_name} ({upper_sym}) delayed reference price ({format_smart_price(curr_price)}), historical chart, RSI(14) at {rsi_val:.1f}, MACD({format_smart_oscillator(macd_val)}), and quantitative AI analysis on TradeGPT.">
     <meta name="robots" content="index, follow">
     <link rel="canonical" href="https://tradegpt-vector.com/assets/{slug}.html">
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -2927,13 +2909,19 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
         .tape-down {{ font-family: 'Space Mono', monospace; color: var(--down-red); font-weight: 700; font-size: 11.5px; }}
         .strip-dot {{ width: 6px; height: 6px; border-radius: 50%; background: var(--up-green); display: inline-block; }}
 
-        /* --- 2. HEADER PRINCIPALE A DOPPIA BARRA UNIFICATO --- */
+        /* --- 2. HEADER PRINCIPALE A DOPPIA BARRA UNIFICATO (CON BADGE AI CENTRATO) --- */
         .inv-header {{ background: var(--bg-surface); border-bottom: 1px solid var(--border-color); position: sticky; top: 0; z-index: 1000; }}
         .inv-header-top {{ max-width: 1320px; margin: 0 auto; padding: 10px 20px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }}
         .brand-box {{ display: flex; align-items: center; gap: 10px; flex-shrink: 0; }}
         .brand-box img {{ width: 34px; height: 34px; border-radius: 7px; object-fit: contain; }}
-        .brand-title {{ font-size: 19px; font-weight: 800; letter-spacing: -0.5px; color: #fff; }}
-        .brand-pro-tag {{ background: var(--accent-emerald); color: #000; font-size: 10px; font-weight: 800; padding: 2px 5px; border-radius: 3px; text-transform: uppercase; margin-left: 2px; }}
+        .brand-title {{
+            font-size: 19px; font-weight: 800; letter-spacing: -0.5px; color: #fff;
+            display: inline-flex; align-items: center; gap: 6px; line-height: 1; white-space: nowrap;
+        }}
+        .brand-pro-tag {{
+            background: var(--accent-emerald); color: #000; font-size: 10px; font-weight: 800;
+            padding: 3px 5px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.3px; line-height: 1;
+        }}
 
         .header-search-wrap {{ flex: 1; max-width: 520px; position: relative; }}
         .header-search-input {{
@@ -3102,7 +3090,7 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
         <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border-color); padding-bottom:12px;">
             <div class="brand-box">
                 <img src="{app_logo_url}" alt="TradeGPT" width="30" height="30">
-                <span class="brand-title">TradeGPT</span>
+                <span class="brand-title">TradeGPT <span class="brand-pro-tag">AI</span></span>
             </div>
             <button onclick="closeMobileSidebar()" style="background:none; border:none; color:#9ca3af; font-size:20px; cursor:pointer;">✕</button>
         </div>
@@ -3184,7 +3172,7 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
                 <img src="{gh_logo}" onerror="this.onerror=function(){{this.src='{app_logo_url}'}};this.src='{fmp_logo}';" alt="{upper_sym}" class="instrument-logo">
                 <div>
                     <h1 style="font-size:1.45rem; font-weight:800; margin:0; color:#fff; letter-spacing:-0.3px;">{full_name} ({upper_sym})</h1>
-                    <p style="font-size:0.82rem; color:var(--text-secondary); margin:4px 0 0 0;">{sector_clean} • Real-Time Price, RSI, MACD & Quantitative Data</p>
+                    <p style="font-size:0.82rem; color:var(--text-secondary); margin:4px 0 0 0;">{sector_clean} • Quantitative Market Data & AI Analytics</p>
                 </div>
             </div>
             <div style="display:flex; gap:8px; align-items:center;">
@@ -3217,12 +3205,12 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
             </div>
             <div id="tvchart"></div>
             <div style="font-size:0.72rem; color:var(--text-muted); margin-top:10px; display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px;">
-                <span>Market data is provided for informational and educational purposes only.</span>
+                <span>Historical charts are for educational visualization only.</span>
                 <span>Drag or pinch to inspect historical candles</span>
             </div>
         </div>
 
-        <!-- NUOVA GRIGLIA 8 STATISTICHE CHIAVE DI SESSIONE -->
+        <!-- GRIGLIA 8 STATISTICHE CHIAVE DI SESSIONE -->
         <div class="key-stats-grid">
             <div class="stat-cell">
                 <div class="stat-lbl">Open</div>
@@ -3258,7 +3246,7 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
             </div>
         </div>
 
-        <!-- NUOVE CARD GEMELLE CON IL PURO VALORE DI RSI (14) E MACD (12,26,9) + ANALISI IA BLOCCATA -->
+        <!-- CARD GEMELLE CON IL PURO VALORE DI RSI (14) E MACD (12,26,9) + ANALISI IA BLOCCATA -->
         <div class="tech-snapshot-grid">
             <!-- Card 1: RSI (14) -->
             <div class="tech-card">
@@ -3396,7 +3384,7 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
             <div class="paywall-cta-banner">
                 <h3 style="margin:0 0 6px 0; font-size:1.15rem; color:#fff;">Unlock Full AI Analysis & Statistical Projections for {upper_sym}</h3>
                 <p style="margin:0 auto; color:var(--text-secondary); max-width:540px; font-size:0.86rem; line-height:1.5;">
-                    You are viewing raw RSI ({rsi_val:.1f}) and MACD ({format_smart_oscillator(macd_val)}) readings. To unlock AI interpretation, Bullish/Bearish ratings, Bollinger Bands, Executive Insider Trades, and 30-Day Statistical Trend Charts for <b>{full_name}</b>, download the <b>TradeGPT</b> Android app.
+                    You are viewing raw mathematical RSI ({rsi_val:.1f}) and MACD ({format_smart_oscillator(macd_val)}) computations. To unlock AI interpretation, Bullish/Bearish ratings, Bollinger Bands, Executive Insider Trades, and 30-Day Statistical Trend Charts for <b>{full_name}</b>, download the <b>TradeGPT</b> Android app.
                 </p>
                 <a href="{play_link}" target="_blank" rel="noopener" class="btn-google-play">
                     {play_svg} Download on Google Play
@@ -3424,7 +3412,7 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
         <!-- BOX LEGALE OBBLIGATORIO DI ACCETTAZIONE IMPLICITA DEI TERMINI E POLICY -->
         <div class="legal-notice-box">
             <strong>⚖️ Legal Notice, Risk Disclosure & Implicit Acceptance of Terms:</strong><br>
-            By accessing, viewing, or utilizing any data, charts, quotes, or indicators displayed on this page, you expressly acknowledge and agree that your use is subject to the strict and unconditional acceptance of the TradeGPT & VectorDEV <a href="https://tradegpt-vector.com/privacy.html">Privacy Policy</a> and <a href="https://tradegpt-vector.com/docs.html">Terms of Use & API/Data Policies</a>. All market prices, candlestick charts, RSI, MACD, and AI-generated statistical metrics for <b>{full_name} ({upper_sym})</b> are provided strictly for informational and educational purposes only. They do NOT constitute financial advice, investment recommendations, or an offer to buy or sell any financial instrument. Trading in stocks, cryptocurrencies, forex, and commodities involves a high degree of risk. Automated scraping, unauthorized redistribution, or commercial use of this data is strictly prohibited.
+            By accessing, viewing, or utilizing any data, charts, quotes, or indicators displayed on this page, you expressly acknowledge and agree that your use is subject to the strict and unconditional acceptance of the TradeGPT & VectorDEV <a href="https://tradegpt-vector.com/privacy.html">Privacy Policy</a> and <a href="https://tradegpt-vector.com/docs.html">Terms of Use & API/Data Policies</a>. All market prices, candlestick charts, RSI, MACD, and AI-generated statistical metrics for <b>{full_name} ({upper_sym})</b> are provided strictly for informational and educational purposes only. They do NOT constitute financial advice, investment recommendations, or an offer to buy or sell any financial instrument. Any prices shown are delayed or end-of-day reference values and should not be used for trade execution. Trading in stocks, cryptocurrencies, forex, and commodities involves a high degree of risk. Automated scraping, unauthorized redistribution, or commercial use of this data is strictly prohibited.
         </div>
     </div>
 
@@ -3613,7 +3601,7 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>All 260+ Covered Financial Assets - Live Charts & Quantitative Data | TradeGPT</title>
+    <title>All 260+ Covered Financial Assets - Reference Charts & Data | TradeGPT</title>
     <link rel="icon" type="image/png" href="{app_logo_url}">
     <meta name="description" content="Browse the complete directory of 260+ global stocks, cryptocurrencies, forex pairs, commodities, and ETFs covered by TradeGPT quantitative AI analysis.">
     <link rel="canonical" href="https://tradegpt-vector.com/assets/">
@@ -3641,8 +3629,8 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
         .inv-header-top {{ max-width: 1320px; margin: 0 auto; padding: 10px 20px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }}
         .brand-box {{ display: flex; align-items: center; gap: 10px; flex-shrink: 0; }}
         .brand-box img {{ width: 34px; height: 34px; border-radius: 7px; object-fit: contain; }}
-        .brand-title {{ font-size: 19px; font-weight: 800; letter-spacing: -0.5px; color: #fff; }}
-        .brand-pro-tag {{ background: var(--accent-emerald); color: #000; font-size: 10px; font-weight: 800; padding: 2px 5px; border-radius: 3px; margin-left: 2px; }}
+        .brand-title {{ font-size: 19px; font-weight: 800; letter-spacing: -0.5px; color: #fff; display: inline-flex; align-items: center; gap: 6px; line-height: 1; }}
+        .brand-pro-tag {{ background: var(--accent-emerald); color: #000; font-size: 10px; font-weight: 800; padding: 3px 5px; border-radius: 4px; margin-left: 2px; text-transform: uppercase; line-height: 1; }}
         .header-search-wrap {{ flex: 1; max-width: 520px; position: relative; }}
         .header-search-input {{ width: 100%; height: 38px; background: var(--bg-body); border: 1px solid var(--border-color); border-radius: 6px; padding: 0 14px 0 38px; color: #fff; font-size: 13.5px; outline: none; }}
         .header-search-input:focus {{ border-color: var(--accent-emerald); }}
@@ -3699,7 +3687,7 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
         {''.join(sec_html)}
         <div class="legal-notice-box">
             <strong>⚖️ Legal Notice, Risk Disclosure & Implicit Acceptance of Terms:</strong><br>
-            By accessing or using this directory and any associated market data pages, you expressly agree to be bound by the TradeGPT & VectorDEV <a href="https://tradegpt-vector.com/privacy.html">Privacy Policy</a> and <a href="https://tradegpt-vector.com/docs.html">Terms of Use</a>. All financial quotes, charts, and AI indicators are provided for informational and educational purposes only and do not constitute financial advice.
+            By accessing or using this directory and any associated market data pages, you expressly agree to be bound by the TradeGPT & VectorDEV <a href="https://tradegpt-vector.com/privacy.html">Privacy Policy</a> and <a href="https://tradegpt-vector.com/docs.html">Terms of Use</a>. All financial quotes, charts, and AI indicators are delayed reference values provided for informational and educational purposes only and do not constitute financial advice.
         </div>
     </main>
     <footer class="inv-footer">
