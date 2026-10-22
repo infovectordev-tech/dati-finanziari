@@ -3246,6 +3246,20 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
             </div>
         </div>
 
+        <!-- BARRA INCENTIVO AI (AGGIUNTA) -->
+        <a href="{play_link}" target="_blank" rel="noopener" style="display:flex; align-items:center; justify-content:space-between; background: linear-gradient(90deg, rgba(16,185,129,0.15) 0%, rgba(24,29,41,0.5) 100%); border: 1px solid rgba(16,185,129,0.3); border-radius: 6px; padding: 14px 18px; margin-bottom: 20px; text-decoration: none; transition: all 0.2s;">
+            <div style="display:flex; align-items:center; gap: 14px;">
+                <div style="background:rgba(16,185,129,0.2); border-radius:50%; width:36px; height:36px; display:flex; align-items:center; justify-content:center; font-size:1.1rem; flex-shrink:0;">✨</div>
+                <div>
+                    <div style="color:#fff; font-weight:700; font-size:0.95rem; margin-bottom:2px;">Ask AI about {upper_sym}</div>
+                    <div style="color:var(--text-secondary); font-size:0.8rem;">Unlock instant AI forecasts, entry signals, and advanced analytics.</div>
+                </div>
+            </div>
+            <div style="background:var(--accent-emerald); color:#000; font-weight:700; font-size:0.75rem; font-family:'Space Mono', monospace; padding:8px 14px; border-radius:4px; display:flex; align-items:center; gap:6px; flex-shrink:0; text-transform:uppercase;">
+                {play_svg} Get App
+            </div>
+        </a>
+
         <!-- CARD GEMELLE CON IL PURO VALORE DI RSI (14) E MACD (12,26,9) + ANALISI IA BLOCCATA -->
         <div class="tech-snapshot-grid">
             <!-- Card 1: RSI (14) -->
