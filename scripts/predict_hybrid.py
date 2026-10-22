@@ -3214,20 +3214,21 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
         <div class="key-stats-grid">
             <div class="stat-cell">
                 <div class="stat-lbl">Open</div>
-                <div class="stat-val">{format_smart_price(open_price)}</div>
+                <div class="stat-val" id="dyn-open">{format_smart_price(open_price)}</div>
             </div>
             <div class="stat-cell">
-                <div class="stat-lbl">Prev. Close</div>
-                <div class="stat-val">{format_smart_price(prev_price)}</div>
+                <div class="stat-lbl" id="dyn-close-lbl">Prev. Close</div>
+                <div class="stat-val" id="dyn-close">{format_smart_price(prev_price)}</div>
             </div>
             <div class="stat-cell">
-                <div class="stat-lbl">Day High</div>
-                <div class="stat-val">{format_smart_price(d_max)}</div>
+                <div class="stat-lbl">High</div>
+                <div class="stat-val" id="dyn-high">{format_smart_price(d_max)}</div>
             </div>
             <div class="stat-cell">
-                <div class="stat-lbl">Day Low</div>
-                <div class="stat-val">{format_smart_price(d_min)}</div>
+                <div class="stat-lbl">Low</div>
+                <div class="stat-val" id="dyn-low">{format_smart_price(d_min)}</div>
             </div>
+            <!-- Le altre 4 celle (52-Week, Volume, ecc.) lasciale uguali -->
             <div class="stat-cell">
                 <div class="stat-lbl">52-Week High</div>
                 <div class="stat-val">{format_smart_price(h_max)}</div>
@@ -3554,6 +3555,51 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
 
         candleSeries.setData(rawData);
         areaSeries.setData(rawData.map(item => ({{ time: item.time, value: item.close }})));
+
+        // --- INIZIO AGGIORNAMENTO DINAMICO OHLC ---
+        // Salviamo i valori originali per ripristinarli quando il mouse esce dal grafico
+        const origOpen = "{format_smart_price(open_price)}";
+        const origClose = "{format_smart_price(prev_price)}";
+        const origHigh = "{format_smart_price(d_max)}";
+        const origLow = "{format_smart_price(d_min)}";
+
+        const elOpen = document.getElementById('dyn-open');
+        const elClose = document.getElementById('dyn-close');
+        const elHigh = document.getElementById('dyn-high');
+        const elLow = document.getElementById('dyn-low');
+        const elCloseLbl = document.getElementById('dyn-close-lbl');
+
+        chart.subscribeCrosshairMove(function(param) {
+            // Controlliamo se il cursore è valido e si trova dentro i limiti del grafico
+            if (
+                param.point === undefined ||
+                !param.time ||
+                param.point.x < 0 ||
+                param.point.x > container.clientWidth ||
+                param.point.y < 0 ||
+                param.point.y > container.clientHeight
+            ) {
+                // Ripristina i valori di base della sessione
+                elOpen.innerText = origOpen;
+                elClose.innerText = origClose;
+                elHigh.innerText = origHigh;
+                elLow.innerText = origLow;
+                elCloseLbl.innerText = "Prev. Close";
+            } else {
+                // Estrae i dati della candela selezionata
+                const data = param.seriesData.get(candleSeries) || param.seriesData.get(areaSeries);
+                if (data) {
+                    elOpen.innerText = data.open !== undefined ? data.open.toFixed(2) : data.value.toFixed(2);
+                    elHigh.innerText = data.high !== undefined ? data.high.toFixed(2) : data.value.toFixed(2);
+                    elLow.innerText = data.low !== undefined ? data.low.toFixed(2) : data.value.toFixed(2);
+                    elClose.innerText = data.close !== undefined ? data.close.toFixed(2) : data.value.toFixed(2);
+                    
+                    // Cambia dinamicamente l'etichetta per far capire all'utente che sta guardando il Close di un giorno specifico
+                    elCloseLbl.innerText = "Close";
+                }
+            }
+        });
+        // --- FINE AGGIORNAMENTO DINAMICO OHLC ---
 
         if (totalBars > 90) {{
             chart.timeScale().setVisibleLogicalRange({{ from: totalBars - 90, to: totalBars - 1 }});
