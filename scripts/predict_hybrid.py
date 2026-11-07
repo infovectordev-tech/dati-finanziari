@@ -3815,4 +3815,259 @@ generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, news_
 
 
 
+# ==============================================================================
+# 10. GENERATORE "PRO TIPS" (STILE INVESTING.COM) CON CLOUDFLARE WORKERS AI
+# ==============================================================================
+
+CF_API_TOKEN = os.environ.get("CF_API_TOKEN") # Token API Cloudflare con permessi Workers AI
+CF_AI_MODEL = "@cf/google/gemma-4-26b-a4b-it"
+pro_tips_path = f"{TARGET_FOLDER}/pro_tips.json"
+
+def generate_random_timestamp(base_dt, window_minutes=20):
+    """Genera un orario casuale nel range [-window_minutes, +window_minutes] rispetto a base_dt."""
+    offset_seconds = random.randint(-window_minutes * 60, window_minutes * 60)
+    random_dt = base_dt + timedelta(seconds=offset_seconds)
+    return random_dt
+
+def select_top_8_hot_tickers(dati_storici_all, indicator_data, percentuali_combine, momentum_results, news_by_symbol):
+    """
+    Seleziona gli 8 ticker più 'caldi' dalla lista dei +260 asset
+    combinando variazione 24h, picco di volumi (RVOL), estremi RSI e news momentum.
+    """
+    candidates = []
+
+    for sym, df in dati_storici_all.items():
+        if df is None or len(df) < 21:
+            continue
+
+        try:
+            close_s = df['Close'].iloc[:, 0] if isinstance(df['Close'], pd.DataFrame) else df['Close']
+            high_s = df['High'].iloc[:, 0] if isinstance(df['High'], pd.DataFrame) else df['High']
+            low_s = df['Low'].iloc[:, 0] if isinstance(df['Low'], pd.DataFrame) else df['Low']
+            vol_s = df['Volume'].iloc[:, 0] if isinstance(df['Volume'], pd.DataFrame) else df['Volume']
+
+            curr_price = float(close_s.iloc[-1])
+            prev_price = float(close_s.iloc[-2])
+            if prev_price <= 0:
+                continue
+
+            chg_24h = ((curr_price - prev_price) / prev_price) * 100.0
+
+            # Volume relativo (RVOL) rispetto alla media a 20 giorni
+            vol_today = float(vol_s.iloc[-1])
+            if vol_today == 0 and len(vol_s) >= 2:
+                vol_today = float(vol_s.iloc[-2])
+            vol_avg_20 = float(vol_s.iloc[-21:-1].mean())
+            rvol = (vol_today / vol_avg_20) if vol_avg_20 > 0 else 1.0
+            rvol = min(rvol, 10.0) # Cap per evitare outlier su dati sporchi
+
+            # Distanza dai massimi/minimi a 52 settimane
+            lookback = min(252, len(close_s))
+            high_52w = float(high_s.tail(lookback).max())
+            low_52w = float(low_s.tail(lookback).min())
+            dist_52w_high = ((curr_price - high_52w) / high_52w) * 100.0 if high_52w > 0 else 0.0
+
+            # Indicatori già calcolati nel tuo script
+            ind = indicator_data.get(sym, {})
+            rsi = float(ind.get("RSI (14)", 50.0))
+            macd_line = float(ind.get("MACD Line", 0.0))
+            macd_sig = float(ind.get("MACD Signal", 0.0))
+            bb_upper = float(ind.get("BB Upper", 0.0))
+            bb_lower = float(ind.get("BB Lower", 0.0))
+
+            hybrid_score = float(percentuali_combine.get(sym, 50.0))
+            mom_score = float(momentum_results.get(sym, 50.0))
+
+            # Ultimi 2 titoli di news reali (se presenti) per dare contesto all'AI
+            raw_news = news_by_symbol.get(sym, [])
+            recent_headlines = [n[0] for n in raw_news[:2]] if raw_news else []
+
+            # Calcolo Heat Score (indice di "calore" dell'asset oggi)
+            rsi_extremity = max(0.0, abs(rsi - 50.0) - 15.0) * 0.4
+            mom_extremity = abs(mom_score - 50.0) * 0.15
+            vol_boost = max(0.0, rvol - 1.0) * 3.5
+            news_boost = 2.0 if recent_headlines else 0.0
+
+            heat_score = (abs(chg_24h) * 1.8) + vol_boost + rsi_extremity + mom_extremity + news_boost
+
+            candidates.append({
+                "symbol": sym,
+                "name": symbol_name_map.get(sym, [sym])[0],
+                "sector": re.sub(r'^\d+\.\s*', '', asset_sector_map.get(sym, "Global Markets")),
+                "price": round(curr_price, 4) if curr_price < 1 else round(curr_price, 2),
+                "change_24h_pct": round(chg_24h, 2),
+                "rvol": round(rvol, 2),
+                "rsi_14": round(rsi, 1),
+                "macd_bullish": bool(macd_line > macd_sig),
+                "dist_52w_high_pct": round(dist_52w_high, 2),
+                "high_52w": round(high_52w, 2),
+                "low_52w": round(low_52w, 2),
+                "bb_upper": bb_upper,
+                "bb_lower": bb_lower,
+                "hybrid_score": round(hybrid_score, 1),
+                "news_momentum": round(mom_score, 1),
+                "headlines": recent_headlines,
+                "heat_score": round(heat_score, 2)
+            })
+        except Exception as e:
+            continue
+
+    # Ordina per Heat Score decrescente e prende i top 8
+    candidates.sort(key=lambda x: x["heat_score"], reverse=True)
+    return candidates[:8]
+
+
+def call_cloudflare_gemma_for_tip(asset_ctx, account_id, api_token):
+    """
+    Chiama @cf/google/gemma-4-26b-a4b-it su Cloudflare Workers AI per generare
+    un singolo ProTip strutturato in JSON basato sui dati reali del ticker.
+    """
+    url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{CF_AI_MODEL}"
+    headers = {
+        "Authorization": f"Bearer {api_token}",
+        "Content-Type": "application/json"
+    }
+
+    headlines_txt = " | ".join(asset_ctx["headlines"]) if asset_ctx["headlines"] else "Nessuna breaking news specifica, movimento guidato da flussi tecnici."
+    macd_txt = "Rialzista (MACD sopra Signal)" if asset_ctx["macd_bullish"] else "Ribassista (MACD sotto Signal)"
+
+    system_prompt = (
+        "Sei un analista quantitativo senior che scrive i 'ProTips' per una piattaforma di trading professionale (stile InvestingPro). "
+        "Il tuo compito è generare UN singolo insight ultra-specifico, denso di dati reali e non banale sul titolo fornito.\n"
+        "REGOLE RIGIDE:\n"
+        "1. Cita SEMPRE i numeri reali forniti (es. variazione %, RVOL, RSI, distanza da massimi 52W, bande di Bollinger o catalizzatori dalle news).\n"
+        "2. Vietato usare frasi generiche o ovvie. Vai dritto all'anomalia tecnica, statistica o fondamentale.\n"
+        "3. Lunghezza del body: 2 o 3 frasi incisive (massimo 320 caratteri).\n"
+        "4. L'hashtag deve essere 1 solo, in maiuscolo col simbolo #, molto specifico per il tema o catalizzatore (es. #AI_CHIPS, #EARNINGS, #BREAKOUT, #OVERSOLD, #DIVIDENDS, #CRYPTO_FLOW).\n"
+        "5. Il campo 'sentiment' deve essere ESATTAMENTE 'bull' (se il quadro/catalizzatore prevalente è positivo o da rimbalzo) oppure 'bear' (se prevale pressione di vendita, ipercomprato estremo a rischio correzione o debolezza).\n"
+        "6. Rispondi ESCLUSIVAMENTE con un oggetto JSON valido, senza markdown o testo extra, con questa struttura esatta:\n"
+        '{"title": "...", "hashtag": "#...", "sentiment": "bull|bear", "body": "..."}'
+    )
+
+    user_prompt = (
+        f"Genera un ProTip in italiano (oppure nella lingua che preferisci impostare) per questo asset caldo di oggi:\n"
+        f"- Ticker: {asset_ctx['symbol']} ({asset_ctx['name']})\n"
+        f"- Settore: {asset_ctx['sector']}\n"
+        f"- Prezzo attuale: {asset_ctx['price']} (Variazione 24h: {asset_ctx['change_24h_pct']:+.2f}%)\n"
+        f"- Volume Relativo (RVOL vs media 20gg): {asset_ctx['rvol']}x\n"
+        f"- RSI (14): {asset_ctx['rsi_14']}\n"
+        f"- Trend MACD: {macd_txt}\n"
+        f"- Bande di Bollinger: Upper {asset_ctx['bb_upper']} / Lower {asset_ctx['bb_lower']}\n"
+        f"- Range 52 Settimane: Min {asset_ctx['low_52w']} / Max {asset_ctx['high_52w']} (Distanza da Max 52W: {asset_ctx['dist_52w_high_pct']:+.2f}%)\n"
+        f"- Quantitative Hybrid Score: {asset_ctx['hybrid_score']}/100 | News Momentum: {asset_ctx['news_momentum']}/100\n"
+        f"- Ultime News: {headlines_txt}"
+    )
+
+    payload = {
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        "temperature": 0.4,
+        "max_tokens": 350
+    }
+
+    try:
+        resp = requests.post(url, headers=headers, json=payload, timeout=25)
+        if resp.status_code == 200:
+            res_json = resp.json()
+            # Cloudflare Workers AI restituisce la risposta in result.response o result.choices
+            raw_text = ""
+            if "result" in res_json:
+                if isinstance(res_json["result"], dict):
+                    raw_text = res_json["result"].get("response", "")
+                    if not raw_text and "choices" in res_json["result"]:
+                        raw_text = res_json["result"]["choices"][0]["message"]["content"]
+
+            # Pulizia di eventuali blocchi ```json ... ```
+            clean_json_str = re.sub(r"^```(?:json)?|```$", "", raw_text.strip(), flags=re.MULTILINE).strip()
+            match = re.search(r"\{.*\}", clean_json_str, re.DOTALL)
+            if match:
+                parsed = json.loads(match.group(0))
+                sentiment_clean = str(parsed.get("sentiment", "")).lower().strip()
+                if sentiment_clean not in ["bull", "bear"]:
+                    sentiment_clean = "bull" if asset_ctx["change_24h_pct"] >= 0 else "bear"
+
+                hashtag_clean = str(parsed.get("hashtag", "#MARKET")).upper().strip()
+                if not hashtag_clean.startswith("#"):
+                    hashtag_clean = "#" + hashtag_clean
+                hashtag_clean = hashtag_clean.split()[0] # Garantisce 1 solo hashtag
+
+                return {
+                    "title": parsed.get("title", f"Movimento chiave su {asset_ctx['symbol']}").strip(),
+                    "hashtag": hashtag_clean,
+                    "sentiment": sentiment_clean,
+                    "body": parsed.get("body", "").strip()
+                }
+        else:
+            print(f"Errore API Cloudflare AI ({resp.status_code}): {resp.text}")
+    except Exception as e:
+        print(f"Eccezione chiamata Gemma per {asset_ctx['symbol']}: {e}")
+
+    # Fallback quantitativo deterministico se la chiamata AI fallisce o il token manca
+    is_bull = (asset_ctx["change_24h_pct"] >= 0 and asset_ctx["rsi_14"] < 75) or asset_ctx["rsi_14"] < 30
+    return {
+        "title": f"{'Forte spinta rialzista' if is_bull else 'Pressione tecnica'} su {asset_ctx['symbol']} ({asset_ctx['change_24h_pct']:+.2f}%)",
+        "hashtag": "#MOMENTUM" if asset_ctx["rvol"] >= 1.5 else "#TECHNICALS",
+        "sentiment": "bull" if is_bull else "bear",
+        "body": (
+            f"{asset_ctx['name']} segna un {asset_ctx['change_24h_pct']:+.2f}% nelle ultime 24h con volumi pari a {asset_ctx['rvol']}x "
+            f"la media a 20 giorni. L'RSI(14) si attesta a {asset_ctx['rsi_14']} con prezzo a {asset_ctx['dist_52w_high_pct']:+.1f}% "
+            f"dai massimi a 52 settimane ({asset_ctx['high_52w']})."
+        )
+    }
+
+
+def generate_and_save_pro_tips():
+    print("Avvio selezione 8 Hot Tickers e generazione ProTips con Gemma 4 26B...")
+    top_8_assets = select_top_8_hot_tickers(
+        dati_storici_all, indicator_data, percentuali_combine, momentum_results, news_by_symbol
+    )
+
+    now_utc = datetime.utcnow()
+    account_id = r2_manager.account_id
+    tips_list = []
+
+    for asset_ctx in top_8_assets:
+        ai_tip = call_cloudflare_gemma_for_tip(asset_ctx, account_id, CF_API_TOKEN)
+        random_dt = generate_random_timestamp(now_utc, window_minutes=20)
+
+        tips_list.append({
+            "symbol": asset_ctx["symbol"],
+            "name": asset_ctx["name"],
+            "title": ai_tip["title"],
+            "hashtag": ai_tip["hashtag"],
+            "status": ai_tip["sentiment"], # "bull" oppure "bear"
+            "timestamp": random_dt.strftime("%Y-%m-%d %H:%M:%S"),
+            "display_time": random_dt.strftime("%H:%M"),
+            "body": ai_tip["body"],
+            "metrics_snapshot": {
+                "price": asset_ctx["price"],
+                "change_24h_pct": asset_ctx["change_24h_pct"],
+                "rvol": asset_ctx["rvol"],
+                "rsi_14": asset_ctx["rsi_14"]
+            },
+            "_sort_dt": random_dt
+        })
+
+    # Ordina i tip dal più recente al meno recente così nel feed appaiono in ordine cronologico
+    tips_list.sort(key=lambda x: x["_sort_dt"], reverse=True)
+    for t in tips_list:
+        del t["_sort_dt"]
+
+    final_payload = {
+        "generated_at_utc": now_utc.strftime("%Y-%m-%d %H:%M:%S"),
+        "count": len(tips_list),
+        "tips": tips_list
+    }
+
+    r2_manager.write_file(pro_tips_path, final_payload, is_json=True)
+    print(f"Salvati {len(tips_list)} ProTips su Cloudflare R2 in: {pro_tips_path}")
+
+# Esecuzione
+generate_and_save_pro_tips()
+
+
+
+
 print("Tutte le operazioni completate con successo!")
