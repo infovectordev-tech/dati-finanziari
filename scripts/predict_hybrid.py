@@ -3822,7 +3822,7 @@ generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, news_
 CF_API_TOKEN = os.environ.get("CF_API_TOKEN") # Token API Cloudflare con permessi Workers AI
 CF_AI_MODEL = "@cf/google/gemma-4-26b-a4b-it"
 pro_tips_path = f"{TARGET_FOLDER}/pro_tips.json"
-TARGET_LANGS = ["ar", "de", "es", "fr", "hi", "id", "it", "ja", "ko", "nl", "pt", "ru", "zh-rCN"]
+TARGET_LANGS = ["ar", "de", "en", "es", "fr", "hi", "id", "it", "ja", "ko", "nl", "pt", "ru", "zh-rCN"]
 
 def generate_random_timestamp(base_dt, window_minutes=20):
     """Genera un orario casuale nel range [-window_minutes, +window_minutes] rispetto a base_dt."""
