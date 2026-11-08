@@ -3816,12 +3816,13 @@ generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, news_
 
 
 # ==============================================================================
-# 10. GENERATORE "PRO TIPS" (STILE INVESTING.COM) CON CLOUDFLARE WORKERS AI
+# 10. GENERATORE "PRO TIPS" MULTILINGUA (STILE INVESTING.COM) CON CLOUDFLARE AI
 # ==============================================================================
 
 CF_API_TOKEN = os.environ.get("CF_API_TOKEN") # Token API Cloudflare con permessi Workers AI
 CF_AI_MODEL = "@cf/google/gemma-4-26b-a4b-it"
 pro_tips_path = f"{TARGET_FOLDER}/pro_tips.json"
+TARGET_LANGS = ["ar", "de", "es", "fr", "hi", "id", "it", "ja", "ko", "nl", "pt", "ru", "zh-rCN"]
 
 def generate_random_timestamp(base_dt, window_minutes=20):
     """Genera un orario casuale nel range [-window_minutes, +window_minutes] rispetto a base_dt."""
@@ -3917,45 +3918,67 @@ def select_top_8_hot_tickers(dati_storici_all, indicator_data, percentuali_combi
     return candidates[:8]
 
 
+def _build_fallback_tip(asset_ctx):
+    """Fallback deterministico se la chiamata AI fallisce o non c'è token."""
+    is_bull = (asset_ctx["change_24h_pct"] >= 0 and asset_ctx["rsi_14"] < 75) or asset_ctx["rsi_14"] < 30
+    title = f"{'Bullish momentum' if is_bull else 'Technical pressure'} on {asset_ctx['symbol']} ({asset_ctx['change_24h_pct']:+.2f}%)"
+    body = (
+        f"{asset_ctx['name']} moves {asset_ctx['change_24h_pct']:+.2f}% in 24h with {asset_ctx['rvol']}x "
+        f"20-day average volume. RSI(14) is at {asset_ctx['rsi_14']} with price {asset_ctx['dist_52w_high_pct']:+.1f}% "
+        f"from its 52-week high ({asset_ctx['high_52w']})."
+    )
+    return {
+        "hashtag": "#MOMENTUM" if asset_ctx["rvol"] >= 1.5 else "#TECHNICALS",
+        "sentiment": "bull" if is_bull else "bear",
+        "translations": {lang: {"title": title, "body": body} for lang in TARGET_LANGS}
+    }
+
+
 def call_cloudflare_gemma_for_tip(asset_ctx, account_id, api_token):
     """
     Chiama @cf/google/gemma-4-26b-a4b-it su Cloudflare Workers AI per generare
-    un singolo ProTip strutturato in JSON basato sui dati reali del ticker.
+    un ProTip con traduzioni simultanee in tutte le lingue target in una sola chiamata.
     """
+    if not api_token:
+        return _build_fallback_tip(asset_ctx)
+
     url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{CF_AI_MODEL}"
     headers = {
         "Authorization": f"Bearer {api_token}",
         "Content-Type": "application/json"
     }
 
-    headlines_txt = " | ".join(asset_ctx["headlines"]) if asset_ctx["headlines"] else "Nessuna breaking news specifica, movimento guidato da flussi tecnici."
-    macd_txt = "Rialzista (MACD sopra Signal)" if asset_ctx["macd_bullish"] else "Ribassista (MACD sotto Signal)"
+    headlines_txt = " | ".join(asset_ctx["headlines"]) if asset_ctx["headlines"] else "No breaking news, technical flow driven."
+    macd_txt = "Bullish (MACD above Signal)" if asset_ctx["macd_bullish"] else "Bearish (MACD below Signal)"
+    langs_str = ", ".join(TARGET_LANGS)
 
     system_prompt = (
-        "Sei un analista quantitativo senior che scrive i 'ProTips' per una piattaforma di trading professionale (stile InvestingPro). "
-        "Il tuo compito è generare UN singolo insight ultra-specifico, denso di dati reali e non banale sul titolo fornito.\n"
-        "REGOLE RIGIDE:\n"
-        "1. Cita SEMPRE i numeri reali forniti (es. variazione %, RVOL, RSI, distanza da massimi 52W, bande di Bollinger o catalizzatori dalle news).\n"
-        "2. Vietato usare frasi generiche o ovvie. Vai dritto all'anomalia tecnica, statistica o fondamentale.\n"
-        "3. Lunghezza del body: 2 o 3 frasi incisive (massimo 320 caratteri).\n"
-        "4. L'hashtag deve essere 1 solo, in maiuscolo col simbolo #, molto specifico per il tema o catalizzatore (es. #AI_CHIPS, #EARNINGS, #BREAKOUT, #OVERSOLD, #DIVIDENDS, #CRYPTO_FLOW).\n"
-        "5. Il campo 'sentiment' deve essere ESATTAMENTE 'bull' (se il quadro/catalizzatore prevalente è positivo o da rimbalzo) oppure 'bear' (se prevale pressione di vendita, ipercomprato estremo a rischio correzione o debolezza).\n"
-        "6. Rispondi ESCLUSIVAMENTE con un oggetto JSON valido, senza markdown o testo extra, con questa struttura esatta:\n"
-        '{"title": "...", "hashtag": "#...", "sentiment": "bull|bear", "body": "..."}'
+        "You are a senior quantitative analyst writing 'ProTips' for a professional trading platform (InvestingPro style). "
+        "Generate ONE ultra-specific, data-dense insight on the provided ticker, translated into ALL requested languages.\n"
+        "STRICT RULES:\n"
+        "1. ALWAYS cite the real numbers provided (24h %, RVOL, RSI, 52W high distance, Bollinger Bands, or news catalysts).\n"
+        "2. No generic or obvious statements. Focus on the technical, statistical, or fundamental anomaly.\n"
+        "3. Body length per language: 2-3 punchy sentences (max 320 characters).\n"
+        "4. 'hashtag': ONE single uppercase tag starting with # in English (e.g., #AI_CHIPS, #EARNINGS, #BREAKOUT, #OVERSOLD).\n"
+        "5. 'sentiment': EXACTLY 'bull' or 'bear'.\n"
+        f"6. 'translations': Must contain ALL these exact language keys: {langs_str}. "
+        "Note: 'zh-rCN' is Simplified Chinese. Each key must map to {\"title\": \"...\", \"body\": \"...\"}.\n"
+        "7. Respond EXCLUSIVELY with valid JSON, no markdown or extra text:\n"
+        '{"hashtag": "#...", "sentiment": "bull|bear", "translations": {"ar": {"title": "...", "body": "..."}, ...}}'
     )
 
     user_prompt = (
-        f"Genera un ProTip in italiano (oppure nella lingua che preferisci impostare) per questo asset caldo di oggi:\n"
+        f"Generate the multilingual ProTip for today's hot asset:\n"
         f"- Ticker: {asset_ctx['symbol']} ({asset_ctx['name']})\n"
-        f"- Settore: {asset_ctx['sector']}\n"
-        f"- Prezzo attuale: {asset_ctx['price']} (Variazione 24h: {asset_ctx['change_24h_pct']:+.2f}%)\n"
-        f"- Volume Relativo (RVOL vs media 20gg): {asset_ctx['rvol']}x\n"
+        f"- Sector: {asset_ctx['sector']}\n"
+        f"- Price: {asset_ctx['price']} (24h Change: {asset_ctx['change_24h_pct']:+.2f}%)\n"
+        f"- Relative Volume (RVOL vs 20d avg): {asset_ctx['rvol']}x\n"
         f"- RSI (14): {asset_ctx['rsi_14']}\n"
-        f"- Trend MACD: {macd_txt}\n"
-        f"- Bande di Bollinger: Upper {asset_ctx['bb_upper']} / Lower {asset_ctx['bb_lower']}\n"
-        f"- Range 52 Settimane: Min {asset_ctx['low_52w']} / Max {asset_ctx['high_52w']} (Distanza da Max 52W: {asset_ctx['dist_52w_high_pct']:+.2f}%)\n"
+        f"- MACD Trend: {macd_txt}\n"
+        f"- Bollinger Bands: Upper {asset_ctx['bb_upper']} / Lower {asset_ctx['bb_lower']}\n"
+        f"- 52W Range: Min {asset_ctx['low_52w']} / Max {asset_ctx['high_52w']} (Dist from 52W High: {asset_ctx['dist_52w_high_pct']:+.2f}%)\n"
         f"- Quantitative Hybrid Score: {asset_ctx['hybrid_score']}/100 | News Momentum: {asset_ctx['news_momentum']}/100\n"
-        f"- Ultime News: {headlines_txt}"
+        f"- Latest News: {headlines_txt}"
     )
 
     payload = {
@@ -3963,23 +3986,20 @@ def call_cloudflare_gemma_for_tip(asset_ctx, account_id, api_token):
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
         ],
-        "temperature": 0.4,
-        "max_tokens": 350
+        "temperature": 0.3,
+        "max_tokens": 2500  # Token alzati per contenere 13 lingue
     }
 
     try:
-        resp = requests.post(url, headers=headers, json=payload, timeout=25)
+        resp = requests.post(url, headers=headers, json=payload, timeout=45)
         if resp.status_code == 200:
             res_json = resp.json()
-            # Cloudflare Workers AI restituisce la risposta in result.response o result.choices
             raw_text = ""
-            if "result" in res_json:
-                if isinstance(res_json["result"], dict):
-                    raw_text = res_json["result"].get("response", "")
-                    if not raw_text and "choices" in res_json["result"]:
-                        raw_text = res_json["result"]["choices"][0]["message"]["content"]
+            if "result" in res_json and isinstance(res_json["result"], dict):
+                raw_text = res_json["result"].get("response", "")
+                if not raw_text and "choices" in res_json["result"]:
+                    raw_text = res_json["result"]["choices"][0]["message"]["content"]
 
-            # Pulizia di eventuali blocchi ```json ... ```
             clean_json_str = re.sub(r"^```(?:json)?|```$", "", raw_text.strip(), flags=re.MULTILINE).strip()
             match = re.search(r"\{.*\}", clean_json_str, re.DOTALL)
             if match:
@@ -3991,40 +4011,71 @@ def call_cloudflare_gemma_for_tip(asset_ctx, account_id, api_token):
                 hashtag_clean = str(parsed.get("hashtag", "#MARKET")).upper().strip()
                 if not hashtag_clean.startswith("#"):
                     hashtag_clean = "#" + hashtag_clean
-                hashtag_clean = hashtag_clean.split()[0] # Garantisce 1 solo hashtag
+                hashtag_clean = hashtag_clean.split()[0]
 
-                return {
-                    "title": parsed.get("title", f"Movimento chiave su {asset_ctx['symbol']}").strip(),
-                    "hashtag": hashtag_clean,
-                    "sentiment": sentiment_clean,
-                    "body": parsed.get("body", "").strip()
-                }
+                raw_trans = parsed.get("translations", {})
+                translations = {}
+                for lang in TARGET_LANGS:
+                    t_obj = raw_trans.get(lang, {})
+                    if isinstance(t_obj, dict) and t_obj.get("title") and t_obj.get("body"):
+                        translations[lang] = {
+                            "title": str(t_obj["title"]).strip(),
+                            "body": str(t_obj["body"]).strip()
+                        }
+
+                # Se ha generato con successo, fallback intelligente su lingue eventualmente mancanti
+                if translations:
+                    fallback_entry = translations.get("en") or translations.get("it") or next(iter(translations.values()))
+                    for lang in TARGET_LANGS:
+                        if lang not in translations:
+                            translations[lang] = fallback_entry
+
+                    return {
+                        "hashtag": hashtag_clean,
+                        "sentiment": sentiment_clean,
+                        "translations": translations
+                    }
         else:
             print(f"Errore API Cloudflare AI ({resp.status_code}): {resp.text}")
     except Exception as e:
         print(f"Eccezione chiamata Gemma per {asset_ctx['symbol']}: {e}")
 
-    # Fallback quantitativo deterministico se la chiamata AI fallisce o il token manca
-    is_bull = (asset_ctx["change_24h_pct"] >= 0 and asset_ctx["rsi_14"] < 75) or asset_ctx["rsi_14"] < 30
-    return {
-        "title": f"{'Forte spinta rialzista' if is_bull else 'Pressione tecnica'} su {asset_ctx['symbol']} ({asset_ctx['change_24h_pct']:+.2f}%)",
-        "hashtag": "#MOMENTUM" if asset_ctx["rvol"] >= 1.5 else "#TECHNICALS",
-        "sentiment": "bull" if is_bull else "bear",
-        "body": (
-            f"{asset_ctx['name']} segna un {asset_ctx['change_24h_pct']:+.2f}% nelle ultime 24h con volumi pari a {asset_ctx['rvol']}x "
-            f"la media a 20 giorni. L'RSI(14) si attesta a {asset_ctx['rsi_14']} con prezzo a {asset_ctx['dist_52w_high_pct']:+.1f}% "
-            f"dai massimi a 52 settimane ({asset_ctx['high_52w']})."
-        )
-    }
+    return _build_fallback_tip(asset_ctx)
+
+
+def already_generated_today(today_str):
+    """Controlla su R2 se pro_tips.json esiste già ed è stato generato oggi (UTC)."""
+    try:
+        # Usa il metodo read_json della tua classe CloudflareR2Manager
+        existing = r2_manager.read_json(pro_tips_path)
+        if existing and isinstance(existing, dict):
+            gen_at = existing.get("generated_at_utc", "")
+            if gen_at.startswith(today_str) and existing.get("count", 0) > 0:
+                return True
+    except Exception as e:
+        print(f"Errore durante il check dei tip esistenti: {e}")
+    return False
 
 
 def generate_and_save_pro_tips():
-    print("Avvio selezione 8 Hot Tickers e generazione ProTips con Gemma 4 26B...")
+    now_utc = datetime.utcnow()
+    today_str = now_utc.strftime("%Y-%m-%d")
+
+    # 1. Finestra oraria: attiva SOLO dalle 10:00 alle 12:59 UTC
+    if not (10 <= now_utc.hour < 13):
+        print(f"ProTips skippati: l'ora UTC attuale ({now_utc.strftime('%H:%M')}) è fuori dalla finestra di generazione 10:00-13:00 UTC.")
+        return
+
+    # 2. Controllo esecuzione singola giornaliera su R2
+    if already_generated_today(today_str):
+        print(f"ProTips già generati per oggi ({today_str} UTC). Nessuna nuova chiamata AI necessaria.")
+        return
+
+    print("Avvio selezione 8 Hot Tickers e generazione ProTips multilingua con Gemma 4 26B...")
     top_8_assets = select_top_8_hot_tickers(
         dati_storici_all, indicator_data, percentuali_combine, momentum_results, news_by_symbol
     )
 
-    now_utc = datetime.utcnow()
     account_id = r2_manager.account_id
     tips_list = []
 
@@ -4035,12 +4086,11 @@ def generate_and_save_pro_tips():
         tips_list.append({
             "symbol": asset_ctx["symbol"],
             "name": asset_ctx["name"],
-            "title": ai_tip["title"],
             "hashtag": ai_tip["hashtag"],
-            "status": ai_tip["sentiment"], # "bull" oppure "bear"
+            "status": ai_tip["sentiment"],
             "timestamp": random_dt.strftime("%Y-%m-%d %H:%M:%S"),
             "display_time": random_dt.strftime("%H:%M"),
-            "body": ai_tip["body"],
+            "translations": ai_tip["translations"],
             "metrics_snapshot": {
                 "price": asset_ctx["price"],
                 "change_24h_pct": asset_ctx["change_24h_pct"],
@@ -4050,7 +4100,7 @@ def generate_and_save_pro_tips():
             "_sort_dt": random_dt
         })
 
-    # Ordina i tip dal più recente al meno recente così nel feed appaiono in ordine cronologico
+    # Ordina i tip dal più recente al meno recente
     tips_list.sort(key=lambda x: x["_sort_dt"], reverse=True)
     for t in tips_list:
         del t["_sort_dt"]
@@ -4062,7 +4112,7 @@ def generate_and_save_pro_tips():
     }
 
     r2_manager.write_file(pro_tips_path, final_payload, is_json=True)
-    print(f"Salvati {len(tips_list)} ProTips su Cloudflare R2 in: {pro_tips_path}")
+    print(f"Salvati {len(tips_list)} ProTips multilingua su Cloudflare R2 in: {pro_tips_path}")
 
 # Esecuzione
 generate_and_save_pro_tips()
