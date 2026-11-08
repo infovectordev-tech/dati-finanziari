@@ -3832,8 +3832,8 @@ def generate_random_timestamp(base_dt, window_minutes=20):
 
 def select_top_8_hot_tickers(dati_storici_all, indicator_data, percentuali_combine, momentum_results, news_by_symbol):
     """
-    Seleziona gli 8 ticker più 'caldi' dalla lista dei +260 asset
-    combinando variazione 24h, picco di volumi (RVOL), estremi RSI e news momentum.
+    Seleziona gli 8 ticker più 'caldi' dalla lista dei +260 asset.
+    Mantiene esattamente la tua firma originale per non rompere nulla.
     """
     candidates = []
 
@@ -3854,42 +3854,29 @@ def select_top_8_hot_tickers(dati_storici_all, indicator_data, percentuali_combi
 
             chg_24h = ((curr_price - prev_price) / prev_price) * 100.0
 
-            # Volume relativo (RVOL) rispetto alla media a 20 giorni
             vol_today = float(vol_s.iloc[-1])
             if vol_today == 0 and len(vol_s) >= 2:
                 vol_today = float(vol_s.iloc[-2])
             vol_avg_20 = float(vol_s.iloc[-21:-1].mean())
-            rvol = (vol_today / vol_avg_20) if vol_avg_20 > 0 else 1.0
-            rvol = min(rvol, 10.0) # Cap per evitare outlier su dati sporchi
+            rvol = min((vol_today / vol_avg_20) if vol_avg_20 > 0 else 1.0, 10.0)
 
-            # Distanza dai massimi/minimi a 52 settimane
             lookback = min(252, len(close_s))
             high_52w = float(high_s.tail(lookback).max())
             low_52w = float(low_s.tail(lookback).min())
             dist_52w_high = ((curr_price - high_52w) / high_52w) * 100.0 if high_52w > 0 else 0.0
 
-            # Indicatori già calcolati nel tuo script
             ind = indicator_data.get(sym, {})
             rsi = float(ind.get("RSI (14)", 50.0))
             macd_line = float(ind.get("MACD Line", 0.0))
             macd_sig = float(ind.get("MACD Signal", 0.0))
-            bb_upper = float(ind.get("BB Upper", 0.0))
-            bb_lower = float(ind.get("BB Lower", 0.0))
 
             hybrid_score = float(percentuali_combine.get(sym, 50.0))
             mom_score = float(momentum_results.get(sym, 50.0))
 
-            # Ultimi 2 titoli di news reali (se presenti) per dare contesto all'AI
             raw_news = news_by_symbol.get(sym, [])
             recent_headlines = [n[0] for n in raw_news[:2]] if raw_news else []
 
-            # Calcolo Heat Score (indice di "calore" dell'asset oggi)
-            rsi_extremity = max(0.0, abs(rsi - 50.0) - 15.0) * 0.4
-            mom_extremity = abs(mom_score - 50.0) * 0.15
-            vol_boost = max(0.0, rvol - 1.0) * 3.5
-            news_boost = 2.0 if recent_headlines else 0.0
-
-            heat_score = (abs(chg_24h) * 1.8) + vol_boost + rsi_extremity + mom_extremity + news_boost
+            heat_score = (abs(chg_24h) * 1.8) + (max(0.0, rvol - 1.0) * 3.5) + (max(0.0, abs(rsi - 50.0) - 15.0) * 0.4) + (abs(mom_score - 50.0) * 0.15) + (2.0 if recent_headlines else 0.0)
 
             candidates.append({
                 "symbol": sym,
@@ -3901,31 +3888,51 @@ def select_top_8_hot_tickers(dati_storici_all, indicator_data, percentuali_combi
                 "rsi_14": round(rsi, 1),
                 "macd_bullish": bool(macd_line > macd_sig),
                 "dist_52w_high_pct": round(dist_52w_high, 2),
-                "high_52w": round(high_52w, 2),
-                "low_52w": round(low_52w, 2),
-                "bb_upper": bb_upper,
-                "bb_lower": bb_lower,
                 "hybrid_score": round(hybrid_score, 1),
-                "news_momentum": round(mom_score, 1),
                 "headlines": recent_headlines,
                 "heat_score": round(heat_score, 2)
             })
-        except Exception as e:
+        except Exception:
             continue
 
-    # Ordina per Heat Score decrescente e prende i top 8
     candidates.sort(key=lambda x: x["heat_score"], reverse=True)
     return candidates[:8]
 
 
+def _get_fundamentals_for_tip_isolated(symbol):
+    """Helper ISOLATO per scaricare al volo i fondamentali solo degli 8 asset vincitori."""
+    try:
+        yf_tick = TICKER_MAP.get(symbol, symbol)
+        info = yf.Ticker(yf_tick).info or {}
+        
+        def s_val(k):
+            v = info.get(k)
+            return round(v, 2) if isinstance(v, (int, float)) else "N/A"
+        def s_pct(k):
+            v = info.get(k)
+            return f"{round(v*100, 2)}%" if isinstance(v, (int, float)) else "N/A"
+            
+        fund_data = {
+            "P/E (Trailing)": s_val("trailingPE"),
+            "P/E (Forward)": s_val("forwardPE"),
+            "Revenue Growth (YoY)": s_pct("revenueGrowth"),
+            "Profit Margin": s_pct("profitMargins"),
+            "Debt to Equity": s_val("debtToEquity"),
+            "Short Float": s_pct("shortPercentOfFloat")
+        }
+        # Filtra via i "N/A" per non sporcare il prompt
+        return {k: v for k, v in fund_data.items() if v != "N/A" and v != "N/A%"}
+    except:
+        return {}
+
+
 def _build_fallback_tip(asset_ctx):
-    """Fallback deterministico se la chiamata AI fallisce o non c'è token."""
+    """Fallback deterministico se la chiamata AI fallisce."""
     is_bull = (asset_ctx["change_24h_pct"] >= 0 and asset_ctx["rsi_14"] < 75) or asset_ctx["rsi_14"] < 30
-    title = f"{'Bullish momentum' if is_bull else 'Technical pressure'} on {asset_ctx['symbol']} ({asset_ctx['change_24h_pct']:+.2f}%)"
+    title = f"{'Bullish momentum' if is_bull else 'Technical pressure'} on {asset_ctx['symbol']}"
     body = (
         f"{asset_ctx['name']} moves {asset_ctx['change_24h_pct']:+.2f}% in 24h with {asset_ctx['rvol']}x "
-        f"20-day average volume. RSI(14) is at {asset_ctx['rsi_14']} with price {asset_ctx['dist_52w_high_pct']:+.1f}% "
-        f"from its 52-week high ({asset_ctx['high_52w']})."
+        f"average volume. RSI(14) is at {asset_ctx['rsi_14']}."
     )
     return {
         "hashtag": "#MOMENTUM" if asset_ctx["rvol"] >= 1.5 else "#TECHNICALS",
@@ -3935,50 +3942,39 @@ def _build_fallback_tip(asset_ctx):
 
 
 def call_cloudflare_gemma_for_tip(asset_ctx, account_id, api_token):
-    """
-    Chiama @cf/google/gemma-4-26b-a4b-it su Cloudflare Workers AI per generare
-    un ProTip con traduzioni simultanee in tutte le lingue target in una sola chiamata.
-    """
+    """Generazione AI avanzata. Incrocia dati tecnici e fondamentali."""
     if not api_token:
         return _build_fallback_tip(asset_ctx)
 
     url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{CF_AI_MODEL}"
-    headers = {
-        "Authorization": f"Bearer {api_token}",
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"}
 
-    headlines_txt = " | ".join(asset_ctx["headlines"]) if asset_ctx["headlines"] else "No breaking news, technical flow driven."
-    macd_txt = "Bullish (MACD above Signal)" if asset_ctx["macd_bullish"] else "Bearish (MACD below Signal)"
+    fund_str = ", ".join([f"{k}: {v}" for k, v in asset_ctx['fundamentals'].items()]) if asset_ctx.get('fundamentals') else "Fund. data N/A (likely Crypto/Forex/Index)."
+    news_str = " | ".join(asset_ctx["headlines"]) if asset_ctx["headlines"] else "No breaking news, technical flow driven."
+    macd_txt = "Bullish Crossover" if asset_ctx["macd_bullish"] else "Bearish Crossover"
     langs_str = ", ".join(TARGET_LANGS)
 
     system_prompt = (
-        "You are a senior quantitative analyst writing 'ProTips' for a professional trading platform (InvestingPro style). "
-        "Generate ONE ultra-specific, data-dense insight on the provided ticker, translated into ALL requested languages.\n"
+        "You are a Senior Equity & Quant Analyst writing premium 'ProTips' for an institutional trading app (InvestingPro style). "
+        "Generate ONE single, highly compelling insight identifying the most striking anomaly in the provided data, translated into ALL requested languages.\n"
         "STRICT RULES:\n"
-        "1. ALWAYS cite the real numbers provided (24h %, RVOL, RSI, 52W high distance, Bollinger Bands, or news catalysts).\n"
-        "2. No generic or obvious statements. Focus on the technical, statistical, or fundamental anomaly.\n"
-        "3. Body length per language: 2-3 punchy sentences (max 320 characters).\n"
-        "4. 'hashtag': ONE single uppercase tag starting with # in English (e.g., #AI_CHIPS, #EARNINGS, #BREAKOUT, #OVERSOLD).\n"
+        "1. DO NOT just list numbers schematically. Synthesize a financial narrative. Find the convergence between Technicals and Fundamentals (e.g., 'Trading at a low P/E despite high revenue growth, now pushing a technical breakout', OR 'High Short Float combined with massive RVOL suggests a short squeeze', OR 'Extreme RSI exhaustion at 52W lows').\n"
+        "2. Cite exactly 1 or 2 key figures (like RVOL, Short Float, RSI, or P/E) to support your thesis. Write fluently.\n"
+        "3. Body length per language: 2 flowing, professional sentences (max 320 characters).\n"
+        "4. 'hashtag': ONE single uppercase tag starting with # (e.g., #VALUE_PLAY, #SHORT_SQUEEZE, #BREAKOUT, #YIELD, #OVERSOLD).\n"
         "5. 'sentiment': EXACTLY 'bull' or 'bear'.\n"
-        f"6. 'translations': Must contain ALL these exact language keys: {langs_str}. "
-        "Note: 'zh-rCN' is Simplified Chinese. Each key must map to {\"title\": \"...\", \"body\": \"...\"}.\n"
-        "7. Respond EXCLUSIVELY with valid JSON, no markdown or extra text:\n"
-        '{"hashtag": "#...", "sentiment": "bull|bear", "translations": {"ar": {"title": "...", "body": "..."}, ...}}'
+        f"6. 'translations': Must contain exact keys: {langs_str}. Note: 'zh-rCN' is Simplified Chinese. Each maps to {{\"title\": \"...\", \"body\": \"...\"}}.\n"
+        "7. Respond EXCLUSIVELY with valid JSON, no markdown or extra text."
     )
 
     user_prompt = (
-        f"Generate the multilingual ProTip for today's hot asset:\n"
-        f"- Ticker: {asset_ctx['symbol']} ({asset_ctx['name']})\n"
-        f"- Sector: {asset_ctx['sector']}\n"
-        f"- Price: {asset_ctx['price']} (24h Change: {asset_ctx['change_24h_pct']:+.2f}%)\n"
-        f"- Relative Volume (RVOL vs 20d avg): {asset_ctx['rvol']}x\n"
-        f"- RSI (14): {asset_ctx['rsi_14']}\n"
-        f"- MACD Trend: {macd_txt}\n"
-        f"- Bollinger Bands: Upper {asset_ctx['bb_upper']} / Lower {asset_ctx['bb_lower']}\n"
-        f"- 52W Range: Min {asset_ctx['low_52w']} / Max {asset_ctx['high_52w']} (Dist from 52W High: {asset_ctx['dist_52w_high_pct']:+.2f}%)\n"
-        f"- Quantitative Hybrid Score: {asset_ctx['hybrid_score']}/100 | News Momentum: {asset_ctx['news_momentum']}/100\n"
-        f"- Latest News: {headlines_txt}"
+        f"Generate the multilingual ProTip for:\n"
+        f"- Asset: {asset_ctx['symbol']} ({asset_ctx['sector']})\n"
+        f"- Price & Vol: {asset_ctx['price']} ({asset_ctx['change_24h_pct']:+.2f}%), RVOL: {asset_ctx['rvol']}x\n"
+        f"- Technicals: RSI: {asset_ctx['rsi_14']}, MACD: {macd_txt}, Dist. 52W High: {asset_ctx['dist_52w_high_pct']:+.2f}%\n"
+        f"- Fundamentals: {fund_str}\n"
+        f"- AI Quant Score: {asset_ctx['hybrid_score']}/100\n"
+        f"- Latest News: {news_str}"
     )
 
     payload = {
@@ -3986,8 +3982,8 @@ def call_cloudflare_gemma_for_tip(asset_ctx, account_id, api_token):
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
         ],
-        "temperature": 0.3,
-        "max_tokens": 2500  # Token alzati per contenere 13 lingue
+        "temperature": 0.35, # Leggermente alzata per una narrazione più umana
+        "max_tokens": 2500
     }
 
     try:
@@ -4023,7 +4019,6 @@ def call_cloudflare_gemma_for_tip(asset_ctx, account_id, api_token):
                             "body": str(t_obj["body"]).strip()
                         }
 
-                # Se ha generato con successo, fallback intelligente su lingue eventualmente mancanti
                 if translations:
                     fallback_entry = translations.get("en") or translations.get("it") or next(iter(translations.values()))
                     for lang in TARGET_LANGS:
@@ -4035,8 +4030,6 @@ def call_cloudflare_gemma_for_tip(asset_ctx, account_id, api_token):
                         "sentiment": sentiment_clean,
                         "translations": translations
                     }
-        else:
-            print(f"Errore API Cloudflare AI ({resp.status_code}): {resp.text}")
     except Exception as e:
         print(f"Eccezione chiamata Gemma per {asset_ctx['symbol']}: {e}")
 
@@ -4046,14 +4039,13 @@ def call_cloudflare_gemma_for_tip(asset_ctx, account_id, api_token):
 def already_generated_today(today_str):
     """Controlla su R2 se pro_tips.json esiste già ed è stato generato oggi (UTC)."""
     try:
-        # Usa il metodo read_json della tua classe CloudflareR2Manager
         existing = r2_manager.read_json(pro_tips_path)
         if existing and isinstance(existing, dict):
             gen_at = existing.get("generated_at_utc", "")
             if gen_at.startswith(today_str) and existing.get("count", 0) > 0:
                 return True
-    except Exception as e:
-        print(f"Errore durante il check dei tip esistenti: {e}")
+    except Exception:
+        pass
     return False
 
 
@@ -4061,17 +4053,19 @@ def generate_and_save_pro_tips():
     now_utc = datetime.utcnow()
     today_str = now_utc.strftime("%Y-%m-%d")
 
-    # 1. Finestra oraria: attiva SOLO dalle 10:00 alle 12:59 UTC
+    # 1. Finestra oraria: attiva solo dalle 10:00 alle 12:59 UTC
     if not (10 <= now_utc.hour < 13):
-        print(f"ProTips skippati: l'ora UTC attuale ({now_utc.strftime('%H:%M')}) è fuori dalla finestra di generazione 10:00-13:00 UTC.")
+        print(f"ProTips skippati: ora UTC attuale ({now_utc.strftime('%H:%M')}) fuori dalla finestra 10:00-13:00 UTC.")
         return
 
-    # 2. Controllo esecuzione singola giornaliera su R2
+    # 2. Controllo esecuzione giornaliera su R2
     if already_generated_today(today_str):
-        print(f"ProTips già generati per oggi ({today_str} UTC). Nessuna nuova chiamata AI necessaria.")
+        print(f"ProTips già generati oggi ({today_str} UTC). Nessuna azione richiesta.")
         return
 
     print("Avvio selezione 8 Hot Tickers e generazione ProTips multilingua con Gemma 4 26B...")
+    
+    # Usa esattamente la tua chiamata originale, nessun parametro aggiunto o rimosso
     top_8_assets = select_top_8_hot_tickers(
         dati_storici_all, indicator_data, percentuali_combine, momentum_results, news_by_symbol
     )
@@ -4080,6 +4074,9 @@ def generate_and_save_pro_tips():
     tips_list = []
 
     for asset_ctx in top_8_assets:
+        # Novità Isolato: Scarica i fondamentali SOLO per questi 8 asset prima di passarlo all'IA
+        asset_ctx['fundamentals'] = _get_fundamentals_for_tip_isolated(asset_ctx['symbol'])
+        
         ai_tip = call_cloudflare_gemma_for_tip(asset_ctx, account_id, CF_API_TOKEN)
         random_dt = generate_random_timestamp(now_utc, window_minutes=20)
 
@@ -4100,7 +4097,6 @@ def generate_and_save_pro_tips():
             "_sort_dt": random_dt
         })
 
-    # Ordina i tip dal più recente al meno recente
     tips_list.sort(key=lambda x: x["_sort_dt"], reverse=True)
     for t in tips_list:
         del t["_sort_dt"]
