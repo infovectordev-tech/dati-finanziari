@@ -125,6 +125,816 @@ TARGET_FOLDER = "hybrid_results"
 TEST_FOLDER = f"{TARGET_FOLDER}/forward_testing" 
 ARCHIVE_FOLDER = f"{TARGET_FOLDER}/news_archive"
 
+# --- INSIDER FLOW (file additivo insider/<SYMBOL>.json, ignorato dal client Java) ---
+INSIDER_FOLDER = f"{TARGET_FOLDER}/insider"
+
+MAX_TRADES = 25
+WINDOW_DAYS = 90        # finestra preferita per la barra buy/sell
+FETCH_DAYS = 365        # quanto indietro si scaricano le operazioni
+# Gli insider operano a intermittenza: se negli ultimi 90 giorni non c'e' nulla, la finestra si allarga
+# (180, poi 365) e il JSON dichiara i giorni effettivi in d90.days, cosi' la barra non resta mai vuota.
+WINDOW_STEPS = (90, 180, 365)
+
+_fx_cache = {}
+
+
+def _fx_rate(frm, to):
+    """Cambio frm->to da Yahoo (es. 'USDEUR=X'). None se non disponibile (le operazioni verranno escluse)."""
+    frm, to = str(frm).upper(), str(to).upper()
+    if frm == to or not to:
+        return 1.0
+    key = (frm, to)
+    if key not in _fx_cache:
+        rate = None
+        try:
+            h = yf.Ticker(f"{frm}{to}=X").history(period="5d")
+            if len(h):
+                rate = float(h["Close"].iloc[-1])
+        except Exception as e:
+            print(f"FX {frm}->{to} non disponibile: {e}")
+        _fx_cache[key] = rate if rate and rate > 0 else None
+    return _fx_cache[key]
+
+
+def _norm_cols(df):
+    df = df.copy()
+    df.columns = [str(c).replace("\xa0", " ").strip() for c in df.columns]
+    return df
+
+
+def _money(series):
+    return pd.to_numeric(
+        series.astype(str).str.replace(r"[\$,+]", "", regex=True), errors="coerce"
+    )
+
+
+def build_openinsider_payload(raw_df, currency="USD"):
+    """Trasforma la tabella OpenInsider (Form 4) nel JSON per l'app.
+
+    Ritorna None se non c'e' nulla di utile o in caso di qualsiasi errore, cosi'
+    non puo' mai compromettere il resto della pipeline.
+    """
+    try:
+        df = _norm_cols(raw_df)
+        type_col = "Trade Type"
+        if type_col not in df.columns or "Trade Date" not in df.columns:
+            return None
+
+        df["_date"] = pd.to_datetime(df["Trade Date"], errors="coerce")
+        df["_value"] = _money(df["Value"]).abs() if "Value" in df.columns else 0.0
+        df["_qty"] = _money(df["Qty"]).abs() if "Qty" in df.columns else 0.0
+        df["_price"] = _money(df["Price"]) if "Price" in df.columns else 0.0
+        df["_owned"] = _money(df["Owned"]) if "Owned" in df.columns else None
+        t = df[type_col].astype(str)
+        df["_buy"] = t.str.contains("Purchase", na=False)
+        df["_sell"] = t.str.contains("Sale", na=False)
+        df["_oe"] = t.str.contains(r"\+OE", na=False)
+        df = df[(df["_buy"] | df["_sell"]) & df["_date"].notna()]
+        df = df.sort_values("_date", ascending=False)
+        if df.empty:
+            return None
+
+        name_col = "Insider Name" if "Insider Name" in df.columns else None
+        cutoff = datetime.now() - timedelta(days=FETCH_DAYS)
+        trades = []
+        for _, r in df[df["_date"] >= cutoff].iterrows():
+            owned = r["_owned"]
+            trades.append({
+                "date": r["_date"].to_pydatetime(),
+                "name": str(r[name_col]).strip() if name_col else "",
+                "role": str(r.get("Title", "") or "").strip(),
+                "type": "buy" if r["_buy"] else "sell",
+                "shares": float(r["_qty"]) if pd.notna(r["_qty"]) else 0.0,
+                "price": float(r["_price"]) if pd.notna(r["_price"]) else 0.0,
+                "value": float(r["_value"]) if pd.notna(r["_value"]) else 0.0,
+                "owned": float(owned) if owned is not None and pd.notna(owned) else None,
+                "oe": bool(r["_oe"]),
+            })
+        trades = [t for t in trades if t["value"] > 0 and t["name"]]
+        return _assemble_insider_payload(trades, currency, "openinsider")
+    except Exception as e:  # mai rompere la pipeline principale
+        print(f"build_openinsider_payload errore: {e}")
+        return None
+
+
+# --- INSIDER EUROPA (fonti ufficiali gratuite, senza chiavi ne' limiti) ---
+# Germania: BaFin Directors' Dealings (export CSV di tutto il mercato, 1 sola richiesta)
+# Francia : AMF/BDIF (elenco JSON + PDF della dichiarazione, parsing con pypdf)
+# Italia/Spagna/UK: nessuna fonte aperta affidabile (Consob/CNMV non scaricabili da script).
+import csv
+import html as _html
+import io
+
+INSIDER_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120 Safari/537.36"}
+
+BAFIN_CSV_URL = ("https://portal.mvp.bafin.de/database/DealingsInfo/sucheForm.do?meldepflichtigerName="
+                 "&zeitraum=0&d-4000784-e=1&emittentButton=Suche+Emittent&emittentName=&emittentIsin="
+                 "&emittentLei=&transaktionsdatumBis=&transaktionsdatumVon=&6578706f7274=1")
+DE_ISIN = {
+    "SAP.DE": "DE0007164600", "SIE.DE": "DE0007236101", "P911.DE": "DE000PAG9113",
+    "ALV.DE": "DE0008404005", "VOW3.DE": "DE0007664039", "MBG.DE": "DE0007100000",
+    "DTE.DE": "DE0005557508",
+}
+# Francia: parola chiave nella ragione sociale AMF (maiuscolo, senza accenti/apostrofi)
+FR_ISSUER_KEYS = {
+    "MC.PA": ["LVMH"], "TTE.PA": ["TOTALENERGIES"], "OR.PA": ["OREAL"],
+    "SAN.PA": ["SANOFI"], "BNP.PA": ["BNP PARIBAS"], "AIR.PA": ["AIRBUS"],
+}
+AMF_API = "https://bdif.amf-france.org/back/api/v1"
+AMF_MAX_PDFS = 40
+
+_DE_ROLES = {"Vorstand": "Management Board", "Aufsichtsrat": "Supervisory Board",
+             "in enger Beziehung": "Closely associated", "Sonstige Führungsperson": "Senior executive"}
+_bafin_rows_cache = None
+_amf_decl_cache = None
+_amf_parsed_cache = {}
+
+
+def _clean_person(s):
+    """Decodifica entita' HTML (&amp;) e porta a Title Case i nomi TUTTI MAIUSCOLI."""
+    s = _html.unescape(str(s or "")).strip()
+    return s.title() if s.isupper() and len(s) > 3 else s
+
+
+def _assemble_insider_payload(trades, currency, source):
+    """trades: lista di dict {date(datetime), name, role, type, shares, price, value, oe, [cur], [owned]}.
+    Le operazioni in valuta diversa da `currency` vengono convertite (o escluse se manca il cambio),
+    cosi' gli importi non mescolano mai valute. Ritorna None se non ci sono operazioni negli ultimi FETCH_DAYS."""
+    if not trades:
+        return None
+    norm = []
+    for t in trades:
+        t = dict(t)
+        cur = str(t.get("cur") or currency or "").upper()
+        if currency and cur and cur != currency.upper():
+            rate = _fx_rate(cur, currency)
+            if rate is None:
+                continue
+            t["price"], t["value"] = t["price"] * rate, t["value"] * rate
+        norm.append(t)
+    cutoff_all = datetime.now() - timedelta(days=FETCH_DAYS)
+    trades = sorted((t for t in norm if t["date"] >= cutoff_all), key=lambda t: t["date"], reverse=True)
+    if not trades:
+        return None
+    days, buys, sells = WINDOW_STEPS[-1], [], []
+    for days in WINDOW_STEPS:
+        cut = datetime.now() - timedelta(days=days)
+        w = [t for t in trades if t["date"] >= cut]
+        buys = [t for t in w if t["type"] == "buy"]
+        sells = [t for t in w if t["type"] == "sell"]
+        if buys or sells:
+            break
+    return {
+        "v": 1,
+        "updated": datetime.now().strftime("%Y-%m-%d"),
+        "currency": currency,
+        "source": source,
+        "d90": {                      # chiave storica: la finestra reale e' in "days"
+            "days": days,
+            "buy": round(sum(t["value"] for t in buys), 2),
+            "sell": round(sum(t["value"] for t in sells), 2),
+            "buyers": len({t["name"] for t in buys}),
+            "sellers": len({t["name"] for t in sells}),
+            "buy_n": len(buys),
+            "sell_n": len(sells),
+        },
+        "trades": [
+            {
+                "date": t["date"].strftime("%Y-%m-%d"), "name": _clean_person(t["name"]), "role": _clean_person(t["role"]),
+                "type": t["type"], "shares": round(t["shares"], 2), "price": round(t["price"], 4),
+                "value": round(t["value"], 2), "owned": t.get("owned"), "oe": bool(t.get("oe", False)),
+            }
+            for t in trades[:MAX_TRADES]
+        ],
+    }
+
+
+def _eu_number(s):
+    """'9.911,77 EUR' -> (9911.77, 'EUR'); '0.0000 Euro' -> (0.0, 'EUR')."""
+    s = str(s).strip()
+    cur = "EUR"
+    m = re.search(r"([A-Za-z]{3,})\s*$", s)
+    if m:
+        cur = "EUR" if m.group(1).lower() == "euro" else m.group(1).upper()
+    num = re.sub(r"[^0-9,.\-]", "", s)
+    if "," in num:                       # formato europeo 1.234,56
+        num = num.replace(".", "").replace(",", ".")
+    try:
+        return float(num), cur
+    except ValueError:
+        return 0.0, cur
+
+
+def _fetch_bafin_rows():
+    global _bafin_rows_cache
+    if _bafin_rows_cache is not None:
+        return _bafin_rows_cache
+    rows = []
+    try:
+        r = requests.get(BAFIN_CSV_URL, headers=INSIDER_HEADERS, timeout=90)
+        r.raise_for_status()
+        text = r.content.decode("utf-8-sig")
+        rows = list(csv.DictReader(io.StringIO(text), delimiter=";"))
+    except Exception as e:
+        print(f"BaFin errore: {e}")
+    _bafin_rows_cache = rows
+    return rows
+
+
+def build_bafin_payload(adjusted_symbol):
+    isin = DE_ISIN.get(adjusted_symbol)
+    if not isin:
+        return None
+    try:
+        trades, currency = [], "EUR"
+        for r in _fetch_bafin_rows():
+            if (r.get("ISIN") or "").strip() != isin:
+                continue
+            if (r.get("Art des Instruments") or "").strip() != "Aktie":
+                continue
+            kind = (r.get("Art des Geschäfts") or "").strip()
+            if kind not in ("Kauf", "Verkauf"):
+                continue                 # "Sonstiges" = assegnazioni/altro, non e' mercato
+            try:
+                d = datetime.strptime((r.get("Datum des Geschäfts") or "").strip(), "%d.%m.%Y")
+            except ValueError:
+                continue
+            price, currency = _eu_number(r.get("Durchschnittspreis", ""))
+            value, _ = _eu_number(r.get("Aggregiertes Volumen", ""))
+            if value <= 0:
+                continue
+            role = _DE_ROLES.get((r.get("Position / Status") or "").strip(), (r.get("Position / Status") or "").strip())
+            trades.append({
+                "date": d, "name": (r.get("Meldepflichtiger") or "").strip(), "role": role,
+                "type": "buy" if kind == "Kauf" else "sell",
+                "shares": (value / price) if price > 0 else 0.0, "price": price, "value": value, "cur": currency,
+            })
+        return _assemble_insider_payload(trades, "EUR", "bafin")
+    except Exception as e:
+        print(f"build_bafin_payload errore: {e}")
+        return None
+
+
+def _norm_issuer(s):
+    s = unicodedata.normalize("NFKD", str(s)).encode("ascii", "ignore").decode()
+    return re.sub(r"[^A-Z0-9 ]", "", s.upper().replace("'", ""))
+
+
+def _fetch_amf_declarations():
+    """Dichiarazioni dei dirigenti degli ultimi FETCH_DAYS giorni (paginate da 500)."""
+    global _amf_decl_cache
+    if _amf_decl_cache is not None:
+        return _amf_decl_cache
+    out = []
+    cutoff = datetime.now() - timedelta(days=FETCH_DAYS)
+    try:
+        for page in range(14):
+            r = requests.get(f"{AMF_API}/informations?TypesInformation=DD&Size=500&From={page * 500}",
+                             headers=INSIDER_HEADERS, timeout=60)
+            r.raise_for_status()
+            items = r.json().get("result", [])
+            if not items:
+                break
+            stop = False
+            for it in items:
+                d = datetime.strptime(it["dateInformation"][:10], "%Y-%m-%d")
+                if d < cutoff:
+                    stop = True
+                    continue
+                docs = it.get("documents") or []
+                soc = it.get("societes") or []
+                if docs and soc and docs[0].get("path"):
+                    out.append({"numero": it.get("numero"), "issuer": _norm_issuer(soc[0].get("raisonSociale", "")),
+                                "path": docs[0]["path"]})
+            if stop:
+                break
+    except Exception as e:
+        print(f"AMF elenco errore: {e}")
+    _amf_decl_cache = out
+    return out
+
+
+_FR_MONTHS = {"janvier": 1, "fevrier": 2, "mars": 3, "avril": 4, "mai": 5, "juin": 6, "juillet": 7,
+              "aout": 8, "septembre": 9, "octobre": 10, "novembre": 11, "decembre": 12}
+
+
+def _parse_amf_pdf(path):
+    """Estrae una transazione dal PDF AMF. Ritorna dict o None."""
+    if path in _amf_parsed_cache:
+        return _amf_parsed_cache[path]
+    res = None
+    try:
+        from pypdf import PdfReader          # dipendenza opzionale: pip install pypdf
+        r = requests.get(f"{AMF_API}/documents/{path}", headers=INSIDER_HEADERS, timeout=60)
+        r.raise_for_status()
+        text = "\n".join((p.extract_text() or "") for p in PdfReader(io.BytesIO(r.content)).pages)
+
+        def grab(patterns):
+            for p in patterns:
+                m = re.search(p, text, re.I | re.S)
+                if m:
+                    return m.group(1).strip()
+            return ""
+
+        person = grab([r"PERSON CLOSELY ASSOCIATED\s*:\s*\n(.+?)\n(?:INITIAL|NOTIFICATION)",
+                       r"PERSONNE ETROITEMENT LIEE\s*:\s*\n(.+?)\n(?:NOTIFICATION)"])
+        nature = grab([r"NATURE OF THE TRANSACTION\s*:\s*([^\n]+)", r"NATURE DE LA TRANSACTION\s*:\s*([^\n]+)"]).lower()
+        inst = grab([r"TYPE OF INSTRUMENT\s*:\s*([^\n]+)", r"DESCRIPTION DE L.INSTRUMENT FINANCIER\s*:\s*([^\n]+)"]).lower()
+        date_s = grab([r"DATE OF THE TRANSACTION\s*:\s*([^\n]+)", r"DATE DE LA TRANSACTION\s*:\s*([^\n]+)"])
+        vol_s = grab([r"AGGREGATED VOLUME\s*:\s*([\d.,]+)", r"INFORMATIONS AGREGEES.*?VOLUME\s*:\s*([\d.,]+)"])
+        price_s = grab([r"AGGREGATED INFORMATION\s*PRICE\s*:\s*([^\n]+)", r"INFORMATIONS AGREGEES\s*PRIX\s*:\s*([^\n]+)"])
+        oe = bool(re.search(r"(EXERCISE OF A SHARE OPTION|EXERCICE DE PROGRAMMES D.OPTIONS)[^:]*:\s*(YES|OUI)", text, re.I))
+
+        if any(k in nature for k in ("acquisition", "purchase", "achat")):
+            kind = "buy"
+        elif any(k in nature for k in ("cession", "disposal", "sale", "vente")):
+            kind = "sell"
+        else:
+            kind = None
+        price, cur = _eu_number(price_s)
+        volume = float(re.sub(r"[^0-9.]", "", vol_s) or 0)       # il PDF usa il punto decimale
+        d = None
+        for fmt in ("%d %B %Y", "%d %b %Y"):
+            try:
+                d = datetime.strptime(date_s, fmt)
+                break
+            except ValueError:
+                pass
+        if d is None:                                             # mesi francesi
+            m = re.match(r"(\d{1,2})\s+(\w+)\s+(\d{4})", date_s)
+            if m:
+                mon = _FR_MONTHS.get(_norm_issuer(m.group(2)).lower())
+                if mon:
+                    d = datetime(int(m.group(3)), mon, int(m.group(1)))
+        # price == 0 => attribuzione gratuita/vesting, non e' un'operazione di mercato
+        if kind and d and price > 0 and volume > 0 and person and not any(
+                x in inst for x in ("obligation", "bond", "option", "deriv", "dériv", "warrant")):
+            name, _, role = person.partition(",")
+            res = {"date": d, "name": name.strip(), "role": role.strip(), "type": kind,
+                   "shares": volume, "price": price, "value": price * volume, "oe": oe, "cur": cur}
+    except ImportError:
+        print("pypdf non installato: salto gli insider francesi (pip install pypdf)")
+    except Exception as e:
+        print(f"AMF PDF errore ({path[:20]}): {e}")
+    _amf_parsed_cache[path] = res
+    return res
+
+
+def build_amf_payload(adjusted_symbol):
+    keys = FR_ISSUER_KEYS.get(adjusted_symbol)
+    if not keys:
+        return None
+    try:
+        trades = []
+        mine = [d for d in _fetch_amf_declarations() if any(k in d["issuer"] for k in keys)][:AMF_MAX_PDFS]
+        for d in mine:
+            t = _parse_amf_pdf(d["path"])
+            if t:
+                trades.append(t)
+        return _assemble_insider_payload(trades, "EUR", "amf")
+    except Exception as e:
+        print(f"build_amf_payload errore: {e}")
+        return None
+
+
+
+# --- ITALIA: eMarket Storage (OAM) ---------------------------------------------
+# Elenco comunicati per emittente (HTML pubblico) + PDF nel modello standard
+# ESMA/MAR art.19 (bilingue IT/EN). Copre gli emittenti che usano eMarket Storage.
+EMS_BASE = "https://www.emarketstorage.it"
+IT_ISSUERS = {   # ticker Yahoo -> (id emittente eMarket Storage, ISIN azione)
+    "ISP.MI": (142, "IT0000072618"), "ENEL.MI": (1003, "IT0003128367"),
+    "G.MI": (236, "IT0000062072"), "LDO.MI": (97, "IT0003856405"),
+    "MONC.MI": (80007, "IT0004965148"), "PST.MI": (2355, "IT0003796171"),
+    "UCG.MI": (198, "IT0005239360"), "UNI.MI": (1071, "IT0004810456"),
+}
+IT_MAX_PAGES = 6
+IT_MAX_PDFS = 60
+_it_parsed_cache = {}
+
+
+def _parse_qty(s):
+    s = str(s).strip()
+    if re.fullmatch(r"\d{1,3}([.,]\d{3})+", s):      # 7.250 / 7,250 -> 7250
+        return float(re.sub(r"[.,]", "", s))
+    try:
+        return float(s.replace(",", "."))
+    except ValueError:
+        return 0.0
+
+
+def _parse_price(s):
+    s = str(s).strip()
+    if "," in s and "." in s:
+        dec = "," if s.rfind(",") > s.rfind(".") else "."
+        s = s.replace("." if dec == "," else ",", "").replace(dec, ".")
+    else:
+        s = s.replace(",", ".")
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
+
+
+def _fetch_ems_list(company_id):
+    """[(data datetime, url pdf)] piu' recenti per primi, ultimi FETCH_DAYS giorni."""
+    cutoff = datetime.now() - timedelta(days=FETCH_DAYS)
+    out, seen = [], set()
+    for page in range(IT_MAX_PAGES):
+        r = requests.get(f"{EMS_BASE}/it/comunicati-finanziari",
+                         params={"azienda": company_id, "titolo": "internal dealing", "page": page},
+                         headers=INSIDER_HEADERS, timeout=60)
+        r.raise_for_status()
+        rows = re.findall(r'href="(/sites/default/files/comunicati/[^"]+\.pdf)"[^>]*>\s*<time[^>]*>\s*(\d{2}/\d{2}/\d{4})', r.text)
+        if not rows:
+            break
+        old = False
+        for url, d in rows:
+            dt = datetime.strptime(d, "%d/%m/%Y")
+            if dt < cutoff:
+                old = True
+                continue
+            if url not in seen:
+                seen.add(url)
+                out.append((dt, url))
+        if old:
+            break
+        time.sleep(0.4)
+    return out
+
+
+def _parse_esma_pdf(url, isin):
+    """Parsa un PDF nel modello ESMA art.19 MAR. Ritorna dict o None."""
+    key = (url, isin)
+    if key in _it_parsed_cache:
+        return _it_parsed_cache[key]
+    res = None
+    try:
+        from pypdf import PdfReader          # dipendenza opzionale: pip install pypdf
+        r = requests.get(EMS_BASE + url, headers=INSIDER_HEADERS, timeout=60)
+        r.raise_for_status()
+        text = "\n".join((p.extract_text() or "") for p in PdfReader(io.BytesIO(r.content)).pages)
+        m_isin = re.search(r"ISIN:?\s*([A-Z]{2}[A-Z0-9]{9}\d)", text)
+        if m_isin and m_isin.group(1) != isin:
+            raise ValueError("strumento diverso")          # obbligazioni, altre azioni, ecc.
+
+        def grab(pat, flags=re.S):
+            m = re.search(pat, text, flags)
+            return m.group(1).strip() if m else ""
+
+        first = grab(r"First name:\s*\n\s*(.*?)\s*Cognome:")
+        last = grab(r"Last name:\s*\n\s*([^\n]+)")
+        name = (first + " " + last).strip().title() if (first or last) else "N/D"
+        role = grab(r"Role:\s*\n\s*([^\n]+)")
+        nature = grab(r"\n([^\n]{2,60})\nA norma dell.articolo 19, paragrafo 6").lower()
+        if not nature:
+            nature = grab(r"\n([^\n]{2,60})\nPursuant to Article 19\(6\)").lower()
+        option = grab(r"programm[ai] di opzioni su azioni[^\n]*\n[^\n]*\n\s*(Si|Sì|No|Yes)\b", re.S | re.I).lower() in ("si", "sì", "yes")
+        price = _parse_price(grab(r"Prezzo:\s*([\d.,]+)") or grab(r"Price:\s*([\d.,]+)"))
+        qty = _parse_qty(grab(r"Volume aggregato:\s*([\d.,]+)") or grab(r"Aggregated volume:\s*([\d.,]+)"))
+        cur = grab(r"Prezzo:\s*[\d.,]+\s*([A-Z]{3})") or "EUR"
+        d_s = grab(r"Date of the transaction.*?(20\d{2}-\d{2}-\d{2})")
+        d = datetime.strptime(d_s, "%Y-%m-%d") if d_s else None
+
+        if any(k in nature for k in ("acquisto", "acquisizione", "purchase", "acquisition", "buy")):
+            kind = "buy"
+        elif any(k in nature for k in ("cessione", "vendita", "sale", "disposal", "sell")):
+            kind = "sell"
+        else:
+            kind = None            # assegnazioni, esercizi, donazioni... non sono operazioni di mercato
+        if kind and d and price > 0 and qty > 0:
+            res = {"date": d, "name": name, "role": role, "type": kind, "shares": qty,
+                   "price": price, "value": price * qty, "oe": option, "cur": cur}
+    except ImportError:
+        print("pypdf non installato: salto gli insider italiani (pip install pypdf)")
+    except Exception as e:
+        print(f"eMarket PDF errore ({str(url)[-24:]}): {e}")
+    _it_parsed_cache[key] = res
+    return res
+
+
+def build_emarket_payload(adjusted_symbol):
+    info = IT_ISSUERS.get(adjusted_symbol)
+    if not info:
+        return None
+    try:
+        company_id, isin = info
+        trades = []
+        for dt, url in _fetch_ems_list(company_id)[:IT_MAX_PDFS]:
+            t = _parse_esma_pdf(url, isin)
+            if t:
+                trades.append(t)
+            time.sleep(0.2)
+        return _assemble_insider_payload(trades, "EUR", "emarketstorage")
+    except Exception as e:
+        print(f"build_emarket_payload errore: {e}")
+        return None
+
+
+# --- FALLBACK UNIVERSALE: Yahoo Finance (gia' usato dallo script, nessuna chiave) ---
+# Copre ad es. Regno Unito, parte di Spagna/Francia. Valuta non esplicita -> "".
+def build_yahoo_insider_payload(adjusted_symbol):
+    try:
+        df = yf.Ticker(adjusted_symbol).insider_transactions
+        if df is None or len(df) == 0:
+            return None
+        trades = []
+        for _, r in df.iterrows():
+            text = str(r.get("Text", "") or "")
+            low = text.lower()
+            if low.startswith("buy back") or "exercise" in low:
+                continue
+            if low.startswith(("bought", "purchase", "buy")):
+                kind = "buy"
+            elif low.startswith(("sold", "sale", "sell")):
+                kind = "sell"
+            else:
+                continue
+            m = re.search(r"price\s+([\d.,]+)", text)
+            price = _parse_price(m.group(1)) if m else 0.0
+            shares = float(r.get("Shares", 0) or 0)
+            value = r.get("Value")
+            value = float(value) if value is not None and pd.notna(value) else shares * price
+            d = pd.to_datetime(r.get("Start Date"), errors="coerce")
+            if pd.isna(d) or value <= 0:
+                continue
+            name = str(r.get("Insider", "") or "").strip()
+            m2 = re.match(r"^(.+?)\s*\((.+)\)$", name)            # "Smith (Andrew)" -> "Andrew Smith"
+            if m2:
+                name = f"{m2.group(2)} {m2.group(1)}"
+            trades.append({"date": d.to_pydatetime().replace(tzinfo=None), "name": name.title(),
+                           "role": str(r.get("Position", "") or "").strip(), "type": kind,
+                           "shares": shares, "price": price, "value": value})
+        return _assemble_insider_payload(trades, "USD" if "." not in str(adjusted_symbol) else "", "yahoo")
+    except Exception as e:
+        print(f"build_yahoo_insider_payload errore: {e}")
+        return None
+
+
+
+# --- OLANDA: AFM (registro ufficiale, export XML + pagina di dettaglio per notifica) ---
+# Copre gli emittenti registrati nei Paesi Bassi anche se quotati altrove (Stellantis, Ferrari, STM, Airbus...).
+import zipfile
+import xml.etree.ElementTree as ET
+
+AFM_XML_URL = "https://www.afm.nl/export.aspx?type=0ee836dc-5520-459d-bcf4-a4a689de6614&format=xml"
+AFM_DETAIL_URL = "https://www.afm.nl/en/sector/registers/meldingenregisters/transacties-leidinggevenden-mar19-/details?id={id}"
+NL_ISSUERS = {   # ticker Yahoo -> nomi emittente nel registro AFM (confronto esatto, senza maiuscole)
+    "STLAM.MI": ["stellantis n.v."], "RACE.MI": ["ferrari n.v."],
+    "STMMI.MI": ["stmicroelectronics n.v."], "AIR.PA": ["airbus se"],
+}
+AFM_MAX_DETAILS = 40
+_afm_entries_cache = None
+_afm_detail_cache = {}
+
+
+def _fetch_afm_entries():
+    """Notifiche degli ultimi FETCH_DAYS giorni: [{id, date, issuer, person, role}]. Un solo download (~5 MB)."""
+    global _afm_entries_cache
+    if _afm_entries_cache is not None:
+        return _afm_entries_cache
+    out = []
+    try:
+        r = requests.get(AFM_XML_URL, headers=INSIDER_HEADERS, timeout=120)
+        r.raise_for_status()
+        root = ET.fromstring(r.content)
+        cutoff = datetime.now() - timedelta(days=FETCH_DAYS)
+        for v in root.findall("vermelding"):
+            try:
+                d = datetime.strptime((v.findtext("transactiedatum") or "").strip(), "%m/%d/%Y %I:%M:%S %p")
+            except ValueError:
+                continue
+            if d < cutoff:
+                continue
+            out.append({
+                "id": (v.findtext("meldingid") or "").strip(), "date": d,
+                "issuer": (v.findtext("uitgevendeinstelling") or "").strip().lower(),
+                "person": ((v.findtext("meldingsplichtige") or "").strip() or (v.findtext("nauwgelieerdaan") or "").strip()),
+                "role": (v.findtext("functie") or "").strip(),
+            })
+    except Exception as e:
+        print(f"AFM elenco errore: {e}")
+    _afm_entries_cache = out
+    return out
+
+
+def _parse_afm_detail(mid):
+    """Pagina di dettaglio -> (tipo, prezzo, quantita, valuta) oppure None."""
+    if mid in _afm_detail_cache:
+        return _afm_detail_cache[mid]
+    res = None
+    try:
+        r = requests.get(AFM_DETAIL_URL.format(id=mid), headers=INSIDER_HEADERS, timeout=60)
+        r.raise_for_status()
+        text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", r.text))
+        m = re.search(r"Instrument type (?!ISIN)(.+?) ISIN [A-Z0-9]{12} Transaction category (.+?) Transaction type (.+?) "
+                      r"Stock option program (.+?) Trading place (.+?) Price ([\d.,]+) Quantity ([\d.,]+) Unit ([A-Z]{3})", text)
+        if m:
+            ttype = m.group(3).strip().lower()
+            kind = "buy" if ttype in ("koop", "aankoop", "purchase", "buy") else (
+                "sell" if ttype in ("verkoop", "sale", "sell") else None)
+            price, _ = _eu_number(m.group(6))
+            qty, _ = _eu_number(m.group(7))
+            inst = m.group(1).strip().lower()                       # solo azioni: niente obbligazioni/derivati
+            is_share = ("aandeel" in inst or "aandelen" in inst or "share" in inst) and not any(
+                x in inst for x in ("obligatie", "bond", "optie", "option", "warrant", "derivat"))
+            if kind and is_share and price > 0 and qty > 0:
+                res = (kind, price, qty, m.group(8), m.group(4).strip().lower() in ("ja", "yes"))
+    except Exception as e:
+        print(f"AFM dettaglio errore ({mid[:12]}): {e}")
+    _afm_detail_cache[mid] = res
+    return res
+
+
+def build_afm_payload(adjusted_symbol):
+    names = NL_ISSUERS.get(adjusted_symbol)
+    if not names:
+        return None
+    try:
+        trades, currency = [], "EUR"
+        mine = [e for e in _fetch_afm_entries() if e["issuer"] in names][:AFM_MAX_DETAILS]
+        for e in mine:
+            det = _parse_afm_detail(e["id"])
+            if det:
+                kind, price, qty, currency, oe = det
+                trades.append({"date": e["date"], "name": e["person"], "role": e["role"], "type": kind,
+                               "shares": qty, "price": price, "value": price * qty, "oe": oe, "cur": currency})
+            time.sleep(0.25)
+        return _assemble_insider_payload(trades, "EUR", "afm")
+    except Exception as e:
+        print(f"build_afm_payload errore: {e}")
+        return None
+
+
+# --- ENI: tabella ufficiale "Managers' transactions" su eni.com (prezzo dal PDF 1Info) ---
+ENI_URL = "https://www.eni.com/en-IT/governance/market-abuse-regulation/transaction-manager.html"
+ENI_ISIN = "IT0003132476"
+
+
+def _strip_tags(s):
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", s)).replace("&nbsp;", " ").replace("&amp;", "&").strip()
+
+
+def _eni_pdf_price(url):
+    """Prezzo/volume dal PDF (formato '25,0362 EUR 15433'). Ritorna (prezzo, valuta) o (0, 'EUR')."""
+    try:
+        from pypdf import PdfReader
+        full = url if url.startswith("http") else "https://www.eni.com" + url
+        r = requests.get(full, headers=INSIDER_HEADERS, timeout=60)
+        r.raise_for_status()
+        text = "\n".join((p.extract_text() or "") for p in PdfReader(io.BytesIO(r.content)).pages)
+        m = re.search(r"Volume\(s\)\s*([\d.,]+)\s*([A-Z]{3})\s+[\d.,]+", text)
+        if m:
+            return _parse_price(m.group(1)), m.group(2)
+    except ImportError:
+        pass
+    except Exception as e:
+        print(f"ENI PDF errore: {e}")
+    return 0.0, "EUR"
+
+
+def _close_on(adjusted_symbol, day):
+    """Chiusura Yahoo del giorno (o del precedente): stima del prezzo quando il PDF non e' leggibile."""
+    try:
+        h = yf.Ticker(adjusted_symbol).history(start=(day - timedelta(days=6)).strftime("%Y-%m-%d"),
+                                               end=(day + timedelta(days=2)).strftime("%Y-%m-%d"))
+        h = h[h.index.tz_localize(None) <= pd.Timestamp(day)] if len(h) else h
+        return float(h["Close"].iloc[-1]) if len(h) else 0.0
+    except Exception:
+        return 0.0
+
+
+def build_eni_payload(adjusted_symbol):
+    try:
+        r = requests.get(ENI_URL, headers=INSIDER_HEADERS, timeout=60)
+        r.raise_for_status()
+        cutoff = datetime.now() - timedelta(days=FETCH_DAYS)
+        trades = []
+        cell = r"<td[^>]*>((?:(?!</td>).)*)</td>\s*"        # una cella: non puo' attraversare </td>
+        rows = re.findall(r"<tr[^>]*>\s*" + cell * 3 + r"<td[^>]*>\s*([PS])\s*</td>\s*<td[^>]*>\s*([\d.,]+)\s*</td>\s*" + cell + r"</tr>", r.text, re.S)
+        for name_h, role_h, date_h, kind, shares_s, notes_h in rows:
+            d_m = re.search(r"(\d{1,2})/(\d{1,2})/(\d{4})", _strip_tags(date_h))
+            if not d_m or _strip_tags(notes_h):
+                continue                              # righe con note (assegnazioni, sell-to-cover...) non sono mercato
+            d = datetime(int(d_m.group(3)), int(d_m.group(2)), int(d_m.group(1)))
+            if d < cutoff:
+                continue
+            if len(trades) >= 30:
+                break
+            shares = _parse_qty(shares_s)
+            pdf = re.search(r'href="([^"]+\.pdf)"', date_h)
+            price, cur = _eni_pdf_price(pdf.group(1)) if pdf else (0.0, "EUR")
+            if price <= 0:
+                price = _close_on(adjusted_symbol, d)           # stima (prezzo non disponibile nel PDF)
+            if price <= 0 or shares <= 0:
+                continue
+            trades.append({"date": d, "name": _strip_tags(name_h), "role": _strip_tags(role_h),
+                           "type": "buy" if kind == "P" else "sell", "shares": shares, "price": price,
+                           "value": price * shares, "oe": False, "cur": cur})
+            time.sleep(0.2)
+        return _assemble_insider_payload(trades, "EUR", "eni")
+    except Exception as e:
+        print(f"build_eni_payload errore: {e}")
+        return None
+
+
+# --- BRASILE: CVM dati aperti (VLMO = valori mobiliari negoziati dagli insider) ---
+CVM_ZIP_URL = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/VLMO/DADOS/vlmo_cia_aberta_{year}.zip"
+BR_ISSUERS = {   # ticker (ADR) -> inizio ragione sociale CVM normalizzata (maiuscolo, senza accenti)
+    "ITUB": "ITAU UNIBANCO HOLDING", "ABEV": "AMBEV S.A.", "VALE": "VALE S.A.", "PBR": "PETROLEO BRASILEIRO",
+}
+_BR_CARGO = {"DIRETOR": "Executive officers", "CONSELHO DE ADMINISTRACAO": "Board of directors",
+             "CONTROLADOR": "Controlling shareholder", "CONSELHO FISCAL": "Fiscal council",
+             "ORGAO ESTATUTARIO": "Statutory body"}
+_br_rows_cache = {}
+
+
+def _ascii_up(s):
+    return unicodedata.normalize("NFKD", str(s)).encode("ascii", "ignore").decode().upper().strip()
+
+
+def _fetch_cvm_rows(year):
+    """Righe 'con' (consolidato) dell'anno. Un solo download per anno (~700 KB zip)."""
+    if year in _br_rows_cache:
+        return _br_rows_cache[year]
+    rows = []
+    try:
+        r = requests.get(CVM_ZIP_URL.format(year=year), headers=INSIDER_HEADERS, timeout=120)
+        r.raise_for_status()
+        with zipfile.ZipFile(io.BytesIO(r.content)) as z:
+            name = next(n for n in z.namelist() if n.endswith(f"con_{year}.csv"))
+            text = z.read(name).decode("latin-1")
+        rows = list(csv.DictReader(io.StringIO(text), delimiter=";"))
+    except Exception as e:
+        print(f"CVM {year} errore: {e}")
+    _br_rows_cache[year] = rows
+    return rows
+
+
+def build_cvm_payload(adjusted_symbol):
+    key = BR_ISSUERS.get(adjusted_symbol)
+    if not key:
+        return None
+    try:
+        cutoff = datetime.now() - timedelta(days=FETCH_DAYS)
+        years = sorted({datetime.now().year, (datetime.now() - timedelta(days=FETCH_DAYS)).year})
+        mine = []
+        for y in years:
+            for r in _fetch_cvm_rows(y):
+                if _ascii_up(r.get("Nome_Companhia", "")).startswith(key) and r.get("Tipo_Empresa") == "Companhia":
+                    mine.append(r)
+        # ogni mese puo' essere ripresentato (Versao): tiene solo l'ultima versione per Data_Referencia
+        latest = {}
+        for r in mine:
+            ref, ver = r.get("Data_Referencia", ""), int(r.get("Versao") or 1)
+            latest[ref] = max(latest.get(ref, 0), ver)
+        trades = []
+        for r in mine:
+            if int(r.get("Versao") or 1) != latest.get(r.get("Data_Referencia", "")):
+                continue
+            mov = _ascii_up(r.get("Tipo_Movimentacao", ""))
+            if mov not in ("COMPRA A VISTA", "VENDA A VISTA") or _ascii_up(r.get("Tipo_Ativo", "")) != "ACOES":
+                continue
+            try:
+                d = datetime.strptime(r.get("Data_Movimentacao", ""), "%Y-%m-%d")
+                qty, price, vol = float(r["Quantidade"]), float(r["Preco_Unitario"]), float(r["Volume"])
+            except (ValueError, KeyError):
+                continue
+            if d < cutoff or qty <= 0 or vol <= 0:
+                continue
+            cargo = _ascii_up(r.get("Tipo_Cargo", ""))
+            label = next((v for k, v in _BR_CARGO.items() if cargo.startswith(k)), "Insiders")
+            trades.append({"date": d, "name": label, "role": "", "type": "buy" if mov.startswith("COMPRA") else "sell",
+                           "shares": abs(qty), "price": price, "value": abs(vol), "oe": False})
+        return _assemble_insider_payload(trades, "BRL", "cvm")
+    except Exception as e:
+        print(f"build_cvm_payload errore: {e}")
+        return None
+
+def build_europe_insider_payload(adjusted_symbol):
+    """Fonte ufficiale per mercato/emittente, poi fallback Yahoo. None se nulla/errore.
+    Chiamata anche per i ticker senza suffisso che OpenInsider non copre (ADR brasiliani, ecc.)."""
+    s = str(adjusted_symbol)
+    payload = None
+    if s in BR_ISSUERS:
+        payload = build_cvm_payload(s)
+    elif s == "ENI.MI":
+        payload = build_eni_payload(s)
+    elif s in NL_ISSUERS and s.endswith(".MI"):
+        payload = build_afm_payload(s)
+    elif s.endswith(".DE"):
+        payload = build_bafin_payload(s)
+    elif s.endswith(".PA"):
+        payload = build_amf_payload(s)
+        if payload is None and s in NL_ISSUERS:
+            payload = build_afm_payload(s)
+    elif s.endswith(".MI"):
+        payload = build_emarket_payload(s)
+    if payload is None:
+        payload = build_yahoo_insider_payload(s)
+    return payload
+
+
 # Paths
 file_path = f"{TARGET_FOLDER}/classifica.html"
 news_path = f"{TARGET_FOLDER}/news.html"
@@ -1518,6 +2328,7 @@ def get_sentiment_for_all_symbols(symbol_list):
         pat_score_val = 0.0
         sells_data = None
         buys_data = None
+        flow_payload = None
         
         sector = asset_sector_map.get(symbol, "General")
         leader_sym = sector_leaders.get(sector, "SPX500")
@@ -1782,6 +2593,7 @@ def get_sentiment_for_all_symbols(symbol_list):
                 if adjusted_symbol in insider_cache and insider_cache[adjusted_symbol].get("date") == oggi_str:
                     sells_data = insider_cache[adjusted_symbol].get("sells")
                     buys_data = insider_cache[adjusted_symbol].get("buys")
+                    flow_payload = insider_cache[adjusted_symbol].get("flow")
                     dati_da_cache = True
 
                 if not dati_da_cache:
@@ -1796,6 +2608,7 @@ def get_sentiment_for_all_symbols(symbol_list):
                             tables = pd.read_html(url)
                             if len(tables) > 0:
                                 insider_trades = max(tables, key=lambda t: t.shape[0])
+                                flow_payload = build_openinsider_payload(insider_trades)
                                 insider_trades['Value_clean'] = insider_trades['Value'].replace(r'[\$,]', '', regex=True).astype(float)
                                 
                                 sells = insider_trades[insider_trades['Trade\xa0Type'].str.contains("Sale", na=False)].copy()
@@ -1879,10 +2692,18 @@ def get_sentiment_for_all_symbols(symbol_list):
                         except Exception as e:
                             print(f"Errore API per {adjusted_symbol}: {e}")
 
+                    if flow_payload is None and not is_crypto_forex_index:
+                        try:
+                            flow_payload = build_europe_insider_payload(adjusted_symbol)
+                        except Exception as e:      # i dati extra non devono mai interrompere la pipeline
+                            print(f"Insider extra {adjusted_symbol}: {e}")
+                            flow_payload = None
+
                     insider_cache[adjusted_symbol] = {
                         "date": oggi_str,
                         "sells": sells_data,
-                        "buys": buys_data
+                        "buys": buys_data,
+                        "flow": flow_payload
                     }
 
         except Exception as e: print(f"Err {symbol}: {e}")
@@ -1953,6 +2774,8 @@ def get_sentiment_for_all_symbols(symbol_list):
         html_content.append("</body></html>")
         
         r2_manager.write_file(file_res, "\n".join(html_content), is_json=False)
+        if flow_payload:
+            r2_manager.write_file(f"{INSIDER_FOLDER}/{symbol.upper()}.json", flow_payload, is_json=True)
 
         for title, date, link, src, img in news_data["last_90_days"]:
             sc = (sia.polarity_scores(title)['compound'] + 1) / 2
@@ -3830,10 +4653,33 @@ def generate_random_timestamp(base_dt, window_minutes=20):
     random_dt = base_dt + timedelta(seconds=offset_seconds)
     return random_dt
 
-def select_top_8_hot_tickers(dati_storici_all, indicator_data, percentuali_combine, momentum_results, news_by_symbol):
+def _series(df, col):
+    s = df[col]
+    return s.iloc[:, 0] if isinstance(s, pd.DataFrame) else s
+
+
+def _load_previous_tips():
+    """Tip dell'ultima generazione: servono per non ripetere ticker e aperture."""
+    try:
+        prev = r2_manager.read_json(pro_tips_path)
+        if isinstance(prev, dict) and isinstance(prev.get("tips"), list):
+            return prev["tips"]
+    except Exception:
+        pass
+    return []
+
+
+def _opening_words(text, n=3):
+    return " ".join(str(text).split()[:n]).lower()
+
+
+def select_top_8_hot_tickers(dati_storici_all, indicator_data, percentuali_combine, momentum_results,
+                             news_by_symbol):
     """
-    Seleziona gli 8 ticker più 'caldi' dalla lista dei +260 asset.
-    Mantiene esattamente la tua firma originale per non rompere nulla.
+    Seleziona gli 8 ticker piu' 'caldi'. Firma originale invariata.
+    I tips sono un contenuto Premium: qui NON entrano dati Ultra (insider, short float, target analisti).
+    Novita': metriche di trend (SMA50/200, rendimenti 5/20gg), diversificazione per settore
+    (max 2 per settore) e rotazione rispetto ai ticker dell'ultima generazione.
     """
     candidates = []
 
@@ -3842,10 +4688,10 @@ def select_top_8_hot_tickers(dati_storici_all, indicator_data, percentuali_combi
             continue
 
         try:
-            close_s = df['Close'].iloc[:, 0] if isinstance(df['Close'], pd.DataFrame) else df['Close']
-            high_s = df['High'].iloc[:, 0] if isinstance(df['High'], pd.DataFrame) else df['High']
-            low_s = df['Low'].iloc[:, 0] if isinstance(df['Low'], pd.DataFrame) else df['Low']
-            vol_s = df['Volume'].iloc[:, 0] if isinstance(df['Volume'], pd.DataFrame) else df['Volume']
+            close_s = _series(df, 'Close')
+            high_s = _series(df, 'High')
+            low_s = _series(df, 'Low')
+            vol_s = _series(df, 'Volume')
 
             curr_price = float(close_s.iloc[-1])
             prev_price = float(close_s.iloc[-2])
@@ -3864,6 +4710,18 @@ def select_top_8_hot_tickers(dati_storici_all, indicator_data, percentuali_combi
             high_52w = float(high_s.tail(lookback).max())
             low_52w = float(low_s.tail(lookback).min())
             dist_52w_high = ((curr_price - high_52w) / high_52w) * 100.0 if high_52w > 0 else 0.0
+            dist_52w_low = ((curr_price - low_52w) / low_52w) * 100.0 if low_52w > 0 else 0.0
+
+            dist_sma50 = None
+            if len(close_s) >= 50:
+                sma50 = float(close_s.tail(50).mean())
+                dist_sma50 = ((curr_price - sma50) / sma50) * 100.0 if sma50 > 0 else None
+            dist_sma200 = None
+            if len(close_s) >= 200:
+                sma200 = float(close_s.tail(200).mean())
+                dist_sma200 = ((curr_price - sma200) / sma200) * 100.0 if sma200 > 0 else None
+            ret_5d = ((curr_price / float(close_s.iloc[-6])) - 1) * 100.0 if len(close_s) >= 6 else 0.0
+            ret_20d = ((curr_price / float(close_s.iloc[-21])) - 1) * 100.0 if len(close_s) >= 21 else 0.0
 
             ind = indicator_data.get(sym, {})
             rsi = float(ind.get("RSI (14)", 50.0))
@@ -3888,6 +4746,11 @@ def select_top_8_hot_tickers(dati_storici_all, indicator_data, percentuali_combi
                 "rsi_14": round(rsi, 1),
                 "macd_bullish": bool(macd_line > macd_sig),
                 "dist_52w_high_pct": round(dist_52w_high, 2),
+                "dist_52w_low_pct": round(dist_52w_low, 2),
+                "dist_sma50_pct": None if dist_sma50 is None else round(dist_sma50, 2),
+                "dist_sma200_pct": None if dist_sma200 is None else round(dist_sma200, 2),
+                "ret_5d_pct": round(ret_5d, 2),
+                "ret_20d_pct": round(ret_20d, 2),
                 "hybrid_score": round(hybrid_score, 1),
                 "headlines": recent_headlines,
                 "heat_score": round(heat_score, 2)
@@ -3896,7 +4759,23 @@ def select_top_8_hot_tickers(dati_storici_all, indicator_data, percentuali_combi
             continue
 
     candidates.sort(key=lambda x: x["heat_score"], reverse=True)
-    return candidates[:8]
+
+    # Diversificazione: max 2 per settore, e ruota i ticker usati nella generazione precedente.
+    prev_symbols = {t.get("symbol") for t in _load_previous_tips()}
+    picked, per_sector = [], defaultdict(int)
+    for c in candidates:
+        if len(picked) == 8:
+            break
+        if c["symbol"] in prev_symbols or per_sector[c["sector"]] >= 2:
+            continue
+        picked.append(c)
+        per_sector[c["sector"]] += 1
+    for c in candidates:                      # se mancano candidati "freschi", completa
+        if len(picked) == 8:
+            break
+        if c not in picked:
+            picked.append(c)
+    return picked
 
 
 def _get_fundamentals_for_tip_isolated(symbol):
@@ -3904,136 +4783,352 @@ def _get_fundamentals_for_tip_isolated(symbol):
     try:
         yf_tick = TICKER_MAP.get(symbol, symbol)
         info = yf.Ticker(yf_tick).info or {}
-        
+
         def s_val(k):
             v = info.get(k)
             return round(v, 2) if isinstance(v, (int, float)) else "N/A"
         def s_pct(k):
             v = info.get(k)
             return f"{round(v*100, 2)}%" if isinstance(v, (int, float)) else "N/A"
-            
+
         fund_data = {
             "P/E (Trailing)": s_val("trailingPE"),
             "P/E (Forward)": s_val("forwardPE"),
             "Revenue Growth (YoY)": s_pct("revenueGrowth"),
             "Profit Margin": s_pct("profitMargins"),
             "Debt to Equity": s_val("debtToEquity"),
-            "Short Float": s_pct("shortPercentOfFloat")
-        }
-        # Filtra via i "N/A" per non sporcare il prompt
+        }   # niente Short Float / target analisti: sono dati Ultra
         return {k: v for k, v in fund_data.items() if v != "N/A" and v != "N/A%"}
-    except:
+    except Exception:
         return {}
 
 
-def _build_fallback_tip(asset_ctx):
-    """Fallback deterministico se la chiamata AI fallisce."""
-    is_bull = (asset_ctx["change_24h_pct"] >= 0 and asset_ctx["rsi_14"] < 75) or asset_ctx["rsi_14"] < 30
-    title = f"{'Bullish momentum' if is_bull else 'Technical pressure'} on {asset_ctx['symbol']}"
-    body = (
-        f"{asset_ctx['name']} moves {asset_ctx['change_24h_pct']:+.2f}% in 24h with {asset_ctx['rvol']}x "
-        f"average volume. RSI(14) is at {asset_ctx['rsi_14']}."
-    )
-    return {
-        "hashtag": "#MOMENTUM" if asset_ctx["rvol"] >= 1.5 else "#TECHNICALS",
-        "sentiment": "bull" if is_bull else "bear",
-        "translations": {lang: {"title": title, "body": body} for lang in TARGET_LANGS}
+def _num(v):
+    """'12.5%' / 12.5 / '-3' -> float oppure None."""
+    try:
+        return float(str(v).replace("%", "").replace(",", "").strip())
+    except (ValueError, TypeError):
+        return None
+
+
+# ------------------------------------------------------------------------------
+# MOTORE DI ANALISI: trasforma i dati in una TESI (non in un elenco di numeri)
+# ------------------------------------------------------------------------------
+def _build_insight(a):
+    """Deduzione deterministica: tesi, sentiment, hashtag e fatti rilevanti con la loro lettura."""
+    rsi, chg, rvol = a["rsi_14"], a["change_24h_pct"], a["rvol"]
+    dist_hi, dist_lo = a["dist_52w_high_pct"], a.get("dist_52w_low_pct", 50.0)
+    d50, d200 = a.get("dist_sma50_pct"), a.get("dist_sma200_pct")
+    above50 = d50 is not None and d50 >= 0
+    macd_bull = a["macd_bullish"]
+    f = a.get("fundamentals") or {}
+    pe = _num(f.get("P/E (Forward)")) or _num(f.get("P/E (Trailing)"))
+    growth = _num(f.get("Revenue Growth (YoY)"))
+
+    thesis, sentiment, why = "momentum", ("bull" if chg >= 0 else "bear"), ""
+    if dist_hi >= -3 and rvol >= 1.5 and chg > 0:
+        thesis, sentiment = "breakout", "bull"
+        why = f"Price sits {abs(dist_hi):.1f}% from its 52-week high on {rvol}x volume: a breakout backed by participation, not a drift."
+    elif rsi <= 32:
+        thesis, sentiment = "oversold", "bull"
+        why = f"RSI at {rsi} is washed-out territory" + (f", only {dist_lo:.0f}% above the 52-week low" if dist_lo < 15 else "") + ": selling pressure tends to fade from here, but a rebound needs confirmation."
+    elif rsi >= 72:
+        thesis, sentiment = "overbought", "bear"
+        why = f"RSI at {rsi} after a {a.get('ret_20d_pct', 0):+.1f}% run in 20 days: the move is stretched and vulnerable to a pause."
+    elif rvol >= 2 and abs(chg) < 1.2:
+        thesis, sentiment = "accumulation", ("bull" if (macd_bull or above50) else "bear")
+        why = f"Volume is {rvol}x average yet price barely moves ({chg:+.1f}%): large players are positioning, a decisive move often follows."
+    elif pe is not None and 0 < pe <= 15 and growth is not None and growth >= 8:
+        thesis, sentiment = "value", "bull"
+        why = f"P/E of {pe:.1f} paired with {growth:.0f}% revenue growth: earnings power is not fully priced in."
+    elif chg <= -2 and rvol >= 1.3 and not above50:
+        thesis, sentiment = "selloff", "bear"
+        why = f"A {chg:+.1f}% drop on {rvol}x volume while below the 50-day average: distribution, not a random dip."
+    elif chg <= -1 and above50 and macd_bull:
+        thesis, sentiment = "pullback", "bull"
+        why = f"A {chg:+.1f}% dip while price holds above its 50-day average and MACD stays positive: a pullback inside an uptrend."
+    elif chg >= 2 and d50 is not None and not above50:
+        thesis, sentiment = "recovery", "bull"
+        why = f"A {chg:+.1f}% rebound that still leaves price {abs(d50):.1f}% under its 50-day average: relief, not yet a trend change."
+
+    facts = [f"Move: {chg:+.2f}% today, {a.get('ret_5d_pct', 0):+.1f}% in 5 days, {a.get('ret_20d_pct', 0):+.1f}% in 20 days",
+             f"Volume: {rvol}x the 20-day average", f"RSI(14): {rsi}; MACD {'above' if macd_bull else 'below'} its signal line"]
+    if d50 is not None:
+        facts.append(f"Price is {d50:+.1f}% vs the 50-day average" + (f" and {d200:+.1f}% vs the 200-day" if d200 is not None else ""))
+    facts.append(f"Distance from 52-week high: {dist_hi:+.1f}%")
+    for k, v in f.items():
+        facts.append(f"{k}: {v}")
+
+    hashtags = {"breakout": "#BREAKOUT",
+                "oversold": "#OVERSOLD", "overbought": "#OVERBOUGHT", "accumulation": "#VOLUME_SPIKE",
+                "value": "#VALUE_PLAY", "selloff": "#SELLOFF", "pullback": "#PULLBACK",
+                "recovery": "#RECOVERY", "momentum": "#MOMENTUM"}
+    return {"thesis": thesis, "sentiment": sentiment, "hashtag": hashtags[thesis], "why": why, "facts": facts}
+
+
+# ------------------------------------------------------------------------------
+# FALLBACK DETERMINISTICO (solo se l'AI non risponde): testi nativi in 6 lingue
+# ------------------------------------------------------------------------------
+_FB_GROUP = {"oversold": "oversold", "overbought": "overbought", "breakout": "breakout",
+             "accumulation": "flow", "selloff": "selloff",
+             "pullback": "pullback", "recovery": "pullback"}
+
+_FB = {
+    "oversold": {
+        "en": ("{sym}: selling looks stretched", "{name} has slipped to an RSI of {rsi}, a zone where sellers tend to run out of steam. With volume at {rvol}x average, a relief bounce is plausible, but it needs a close above recent highs to confirm."),
+        "it": ("{sym}: le vendite appaiono tirate", "{name} è scesa a un RSI di {rsi}, zona in cui i venditori tendono a esaurire la spinta. Con volumi a {rvol}x la media un rimbalzo tecnico è plausibile, ma serve una chiusura sopra i massimi recenti per confermarlo."),
+        "es": ("{sym}: la presión vendedora se agota", "{name} cae hasta un RSI de {rsi}, zona donde los vendedores suelen quedarse sin fuerza. Con un volumen de {rvol}x la media, un rebote técnico es plausible, aunque necesita un cierre por encima de los máximos recientes."),
+        "fr": ("{sym} : la pression vendeuse s'essouffle", "{name} recule jusqu'à un RSI de {rsi}, zone où les vendeurs s'épuisent souvent. Avec des volumes à {rvol}x la moyenne, un rebond technique est plausible, mais il faut une clôture au-dessus des plus hauts récents."),
+        "de": ("{sym}: Verkaufsdruck lässt nach", "{name} ist auf ein RSI von {rsi} gefallen – eine Zone, in der den Verkäufern oft die Luft ausgeht. Bei {rvol}x Durchschnittsvolumen ist eine technische Erholung plausibel, braucht aber einen Schlusskurs über den jüngsten Hochs."),
+        "pt": ("{sym}: pressão vendedora perde força", "{name} caiu para um RSI de {rsi}, zona em que os vendedores costumam perder fôlego. Com volume {rvol}x a média, um repique técnico é plausível, mas precisa de um fecho acima das máximas recentes."),
+    },
+    "overbought": {
+        "en": ("{sym}: the run looks stretched", "{name} trades at an RSI of {rsi} after {ret20}% in 20 days. Rallies this extended often pause or retrace, so chasing here carries more risk than the headline move suggests."),
+        "it": ("{sym}: il rialzo appare tirato", "{name} viaggia con un RSI di {rsi} dopo il {ret20}% in 20 giorni. Rialzi così estesi spesso si fermano o ritracciano: inseguire il prezzo ora è più rischioso di quanto sembri."),
+        "es": ("{sym}: la subida parece estirada", "{name} cotiza con un RSI de {rsi} tras un {ret20}% en 20 días. Subidas tan extendidas suelen detenerse o corregir, así que perseguir el precio ahora implica más riesgo del que parece."),
+        "fr": ("{sym} : la hausse paraît tendue", "{name} affiche un RSI de {rsi} après {ret20}% en 20 jours. Des hausses aussi étendues marquent souvent une pause ou un repli : courir après le prix comporte plus de risque qu'il n'y paraît."),
+        "de": ("{sym}: Der Anstieg wirkt überdehnt", "{name} notiert bei einem RSI von {rsi} nach {ret20}% in 20 Tagen. Derart ausgedehnte Rallyes pausieren oder korrigieren oft – dem Kurs hinterherzulaufen ist riskanter, als es aussieht."),
+        "pt": ("{sym}: a alta parece esticada", "{name} negocia com RSI de {rsi} após {ret20}% em 20 dias. Altas tão extensas costumam pausar ou recuar, e perseguir o preço agora traz mais risco do que parece."),
+    },
+    "breakout": {
+        "en": ("{sym}: breakout with real volume", "{name} is only {dist}% below its 52-week high and volume runs at {rvol}x average. Strength on participation is what separates a durable breakout from a false start."),
+        "it": ("{sym}: rottura con volumi veri", "{name} è a solo il {dist}% dai massimi a 52 settimane e i volumi sono a {rvol}x la media. La forza accompagnata dalla partecipazione distingue una rottura solida da una falsa partenza."),
+        "es": ("{sym}: ruptura con volumen real", "{name} está a solo un {dist}% de sus máximos de 52 semanas y el volumen va a {rvol}x la media. La fuerza con participación distingue una ruptura sólida de un falso arranque."),
+        "fr": ("{sym} : cassure avec de vrais volumes", "{name} n'est qu'à {dist}% de son plus haut sur 52 semaines, avec des volumes à {rvol}x la moyenne. La force accompagnée de participation distingue une cassure durable d'un faux départ."),
+        "de": ("{sym}: Ausbruch mit echtem Volumen", "{name} liegt nur {dist}% unter dem 52-Wochen-Hoch, das Volumen beträgt {rvol}x des Durchschnitts. Stärke mit Beteiligung unterscheidet einen tragfähigen Ausbruch von einem Fehlstart."),
+        "pt": ("{sym}: rompimento com volume real", "{name} está a apenas {dist}% da máxima de 52 semanas, com volume a {rvol}x a média. Força com participação separa um rompimento sólido de um falso início."),
+    },
+    "flow": {
+        "en": ("{sym}: heavy volume, quiet price", "{name} trades {rvol}x its usual volume yet price moves only {chg}%. That mismatch often means large players are positioning before the next directional move."),
+        "it": ("{sym}: volumi alti, prezzo fermo", "{name} scambia {rvol}x i volumi abituali ma il prezzo si muove solo del {chg}%. Questo scollamento indica spesso grandi operatori che si posizionano prima del prossimo movimento direzionale."),
+        "es": ("{sym}: volumen alto, precio quieto", "{name} mueve {rvol}x su volumen habitual, pero el precio solo varía un {chg}%. Ese desajuste suele indicar grandes operadores posicionándose antes del siguiente movimiento."),
+        "fr": ("{sym} : gros volumes, prix calme", "{name} échange {rvol}x ses volumes habituels alors que le prix ne bouge que de {chg}%. Cet écart signale souvent de gros acteurs qui se positionnent avant le prochain mouvement."),
+        "de": ("{sym}: hohes Volumen, ruhiger Kurs", "{name} handelt mit {rvol}x dem üblichen Volumen, doch der Kurs bewegt sich nur {chg}%. Diese Diskrepanz deutet oft auf große Akteure hin, die sich vor der nächsten Bewegung positionieren."),
+        "pt": ("{sym}: volume alto, preço parado", "{name} negocia {rvol}x o volume habitual, mas o preço varia só {chg}%. Essa divergência costuma indicar grandes players se posicionando antes do próximo movimento."),
+    },
+    "selloff": {
+        "en": ("{sym}: selling with conviction", "{name} drops {chg}% on {rvol}x average volume while below its 50-day average. Heavy volume on the way down points to distribution rather than a routine dip."),
+        "it": ("{sym}: vendite convinte", "{name} cede il {chg}% con volumi a {rvol}x la media, restando sotto la media a 50 giorni. Volumi alti in discesa indicano distribuzione più che un semplice storno."),
+        "es": ("{sym}: ventas con convicción", "{name} cae un {chg}% con un volumen de {rvol}x la media, por debajo de su media de 50 días. Un volumen alto en la caída apunta a distribución más que a un simple recorte."),
+        "fr": ("{sym} : des ventes appuyées", "{name} perd {chg}% avec des volumes à {rvol}x la moyenne, sous sa moyenne à 50 jours. Un fort volume à la baisse évoque de la distribution plutôt qu'un simple repli."),
+        "de": ("{sym}: Verkäufe mit Überzeugung", "{name} verliert {chg}% bei {rvol}x Durchschnittsvolumen und liegt unter dem 50-Tage-Schnitt. Hohes Volumen beim Rückgang spricht eher für Distribution als für eine normale Delle."),
+        "pt": ("{sym}: vendas com convicção", "{name} cai {chg}% com volume {rvol}x a média, abaixo da média de 50 dias. Volume alto na queda sugere distribuição, não uma simples correção."),
+    },
+    "pullback": {
+        "en": ("{sym}: dip inside an uptrend", "{name} eases {chg}% but holds above its 50-day average with MACD still positive. Pullbacks like this are where trend followers usually look for a better entry."),
+        "it": ("{sym}: storno dentro un trend rialzista", "{name} cede il {chg}% ma resta sopra la media a 50 giorni con MACD ancora positivo. Gli storni di questo tipo sono dove chi segue il trend cerca spesso un ingresso migliore."),
+        "es": ("{sym}: corrección dentro de una tendencia alcista", "{name} cede un {chg}% pero se mantiene sobre su media de 50 días con el MACD aún positivo. Correcciones así son donde quien sigue la tendencia busca una mejor entrada."),
+        "fr": ("{sym} : repli dans une tendance haussière", "{name} recule de {chg}% mais reste au-dessus de sa moyenne à 50 jours, MACD toujours positif. C'est dans ce genre de repli que les suiveurs de tendance cherchent un meilleur point d'entrée."),
+        "de": ("{sym}: Rücksetzer im Aufwärtstrend", "{name} gibt {chg}% nach, hält aber den 50-Tage-Schnitt und das MACD bleibt positiv. Genau in solchen Rücksetzern suchen Trendfolger oft den besseren Einstieg."),
+        "pt": ("{sym}: recuo dentro de uma tendência de alta", "{name} cede {chg}%, mas segue acima da média de 50 dias com o MACD ainda positivo. É em recuos assim que quem segue a tendência costuma buscar uma entrada melhor."),
+    },
+    "momentum": {
+        "en": ("{sym}: momentum is building", "{name} moves {chg}% with {rvol}x average volume and RSI at {rsi}. The combination of price and participation is worth watching for follow-through."),
+        "it": ("{sym}: il momentum prende forma", "{name} si muove del {chg}% con volumi a {rvol}x la media e RSI a {rsi}. L'abbinamento tra prezzo e partecipazione va tenuto d'occhio per capire se c'è continuazione."),
+        "es": ("{sym}: el impulso gana forma", "{name} se mueve un {chg}% con un volumen de {rvol}x la media y RSI en {rsi}. La combinación de precio y participación merece seguimiento para ver si hay continuidad."),
+        "fr": ("{sym} : l'élan se construit", "{name} bouge de {chg}% avec des volumes à {rvol}x la moyenne et un RSI à {rsi}. L'association du prix et de la participation mérite d'être suivie pour juger de la continuation."),
+        "de": ("{sym}: Dynamik baut sich auf", "{name} bewegt sich {chg}% bei {rvol}x Durchschnittsvolumen und einem RSI von {rsi}. Die Kombination aus Kurs und Beteiligung verdient Beobachtung auf Anschlusskäufe bzw. -verkäufe."),
+        "pt": ("{sym}: o ímpeto ganha forma", "{name} varia {chg}% com volume {rvol}x a média e RSI em {rsi}. A combinação de preço e participação merece acompanhamento para ver se há continuidade."),
+    },
+}
+
+
+def _build_fallback_tip(asset_ctx, insight=None, only_langs=None):
+    """Fallback deterministico con testo nativo (en/it/es/fr/de/pt; le altre lingue ricevono l'inglese)."""
+    insight = insight or _build_insight(asset_ctx)
+    group = _FB_GROUP.get(insight["thesis"], "momentum")
+    vals = {
+        "sym": asset_ctx["symbol"], "name": asset_ctx["name"], "chg": f"{asset_ctx['change_24h_pct']:+.1f}",
+        "rvol": asset_ctx["rvol"], "rsi": asset_ctx["rsi_14"], "dist": f"{abs(asset_ctx['dist_52w_high_pct']):.1f}",
+        "ret20": f"{asset_ctx.get('ret_20d_pct', 0):+.0f}",
     }
+    out = {}
+    for lang in (only_langs or TARGET_LANGS):
+        tpl = _FB[group].get(lang) or _FB[group]["en"]
+        out[lang] = {"title": tpl[0].format(**vals), "body": tpl[1].format(**vals)}
+    return {"hashtag": insight["hashtag"], "sentiment": insight["sentiment"], "translations": out,
+            "thesis": insight["thesis"], "source": "fallback"}
 
 
-def call_cloudflare_gemma_for_tip(asset_ctx, account_id, api_token):
-    """Generazione AI avanzata. Incrocia dati tecnici e fondamentali."""
-    if not api_token:
-        return _build_fallback_tip(asset_ctx)
+# ------------------------------------------------------------------------------
+# GENERAZIONE AI IN DUE FASI (testo EN + traduzioni a lotti), con log diagnostici
+# ------------------------------------------------------------------------------
+_LANG_NAMES = {"ar": "Arabic", "de": "German", "en": "English", "es": "Spanish", "fr": "French", "hi": "Hindi",
+               "id": "Indonesian", "it": "Italian", "ja": "Japanese", "ko": "Korean", "nl": "Dutch",
+               "pt": "Portuguese", "ru": "Russian", "zh-rCN": "Simplified Chinese"}
 
+_VOICES = [
+    "lead with the most surprising number",
+    "lead with the risk to the thesis",
+    "lead with what volume says that price does not",
+    "desk-note style: claim, reason, thing to watch",
+    "lead with two signals that disagree",
+]
+
+_LANG_CODES = " ".join(TARGET_LANGS)
+
+
+def _cf_text(j):
+    """Estrae il testo dalla risposta Workers AI: stile OpenAI (choices[0].message.content),
+    con envelope opzionale 'result', oppure il vecchio campo 'response'."""
+    res = j.get("result", j) if isinstance(j, dict) else {}
+    if not isinstance(res, dict):
+        return "", ""
+    finish = ""
+    content = ""
+    choices = res.get("choices")
+    if isinstance(choices, list) and choices:
+        finish = str(choices[0].get("finish_reason") or "")
+        msg = choices[0].get("message") or {}
+        content = msg.get("content") or ""
+        if isinstance(content, list):                       # content a parti: [{type:'text', text:'...'}]
+            content = "".join(p.get("text", "") for p in content if isinstance(p, dict))
+    if not content:
+        content = res.get("response") or ""
+    return str(content), finish
+
+
+def _cf_chat(messages, max_out, temperature, account_id, api_token, tag=""):
+    """Chiamata Workers AI (Gemma 4 e' un modello 'reasoning': il thinking e' ATTIVO di default e consuma
+    i token di output lasciando content vuoto -> prima causa del fallback). Qui il thinking e' disattivato
+    con chat_template_kwargs.enable_thinking=false. Se l'API rifiuta un parametro (400/422) si ripiega su
+    varianti piu' semplici. Ritorna il testo oppure ''."""
     url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{CF_AI_MODEL}"
     headers = {"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"}
+    base = {"messages": messages, "temperature": temperature}
+    variants = [
+        {**base, "max_completion_tokens": max_out, "response_format": {"type": "json_object"},
+         "chat_template_kwargs": {"enable_thinking": False}},
+        {**base, "max_completion_tokens": max_out, "chat_template_kwargs": {"enable_thinking": False}},
+        {**base, "max_tokens": max_out},
+    ]
+    vi, tries = 0, 0
+    while vi < len(variants) and tries < 5:
+        tries += 1
+        try:
+            resp = requests.post(url, headers=headers, json=variants[vi], timeout=90)
+            if resp.status_code == 200:
+                j = resp.json()
+                text, finish = _cf_text(j)
+                if text.strip():
+                    if finish == "length":
+                        print(f"[tips] {tag}: output troncato (finish_reason=length)")
+                    return text
+                usage = (j.get("result", j) or {}).get("usage") if isinstance(j, dict) else None
+                print(f"[tips] {tag}: content vuoto, finish={finish!r}, usage={usage}")
+                vi += 1                                       # riprova con una variante piu' semplice
+            elif resp.status_code in (400, 422):
+                print(f"[tips] {tag}: HTTP {resp.status_code} (variante {vi}): {resp.text[:240]}")
+                vi += 1
+            elif resp.status_code in (429, 500, 502, 503, 504):
+                print(f"[tips] {tag}: HTTP {resp.status_code}, riprovo")
+                time.sleep(2 + tries * 2)
+            else:
+                print(f"[tips] {tag}: HTTP {resp.status_code}: {resp.text[:240]}")
+                break
+        except Exception as e:
+            print(f"[tips] {tag}: eccezione {e}")
+            time.sleep(2)
+    return ""
 
-    fund_str = ", ".join([f"{k}: {v}" for k, v in asset_ctx['fundamentals'].items()]) if asset_ctx.get('fundamentals') else "Fund. data N/A (likely Crypto/Forex/Index)."
-    news_str = " | ".join(asset_ctx["headlines"]) if asset_ctx["headlines"] else "No breaking news, technical flow driven."
-    macd_txt = "Bullish Crossover" if asset_ctx["macd_bullish"] else "Bearish Crossover"
-    langs_str = ", ".join(TARGET_LANGS)
 
+def _extract_json_obj(text):
+    clean = re.sub(r"^```(?:json)?|```$", "", str(text).strip(), flags=re.MULTILINE).strip()
+    m = re.search(r"\{.*\}", clean, re.DOTALL)
+    if not m:
+        return None
+    raw = m.group(0)
+    for candidate in (raw, re.sub(r",\s*([}\]])", r"\1", raw)):
+        try:
+            return json.loads(candidate)
+        except Exception:
+            continue
+    return None
+
+
+def _parse_lang_map(obj, langs):
+    """{lang: [title, body]} oppure {lang: {title, body}} -> {lang: {title, body}} per le lingue valide."""
+    out = {}
+    if not isinstance(obj, dict):
+        return out
+    for l in langs:
+        v = obj.get(l)
+        t = b = ""
+        if isinstance(v, (list, tuple)) and len(v) >= 2:
+            t, b = str(v[0]).strip(), str(v[1]).strip()
+        elif isinstance(v, dict):
+            t, b = str(v.get("title", "")).strip(), str(v.get("body", "")).strip()
+        if t and b:
+            out[l] = {"title": t[:90], "body": b[:300]}
+    return out
+
+
+def _compact_data(a):
+    """Dati minimi e solo livelli Free/Premium (mai insider, short float o target analisti: sono Ultra)."""
+    f = a.get("fundamentals") or {}
+    parts = [f"chg {a['change_24h_pct']:+.1f}%", f"vol {a['rvol']}x", f"RSI {a['rsi_14']}",
+             f"52wH {a['dist_52w_high_pct']:+.0f}%"]
+    if a.get("dist_sma50_pct") is not None:
+        parts.append(f"vs50d {a['dist_sma50_pct']:+.0f}%")
+    if a.get("ret_20d_pct") is not None:
+        parts.append(f"20d {a['ret_20d_pct']:+.0f}%")
+    pe = f.get("P/E (Forward)") or f.get("P/E (Trailing)")
+    if pe is not None:
+        parts.append(f"PE {pe}")
+    if f.get("Revenue Growth (YoY)"):
+        parts.append(f"revG {f['Revenue Growth (YoY)']}")
+    return ", ".join(parts)
+
+
+def call_cloudflare_gemma_for_tip(asset_ctx, account_id, api_token, avoid_openings=None):
+    """Una sola chiamata compatta: tesi deterministica in input, 14 lingue in output (array [titolo, corpo]).
+    Le eventuali lingue mancanti vengono richieste con una seconda chiamata minima, poi fallback nativo."""
+    insight = _build_insight(asset_ctx)
+    if not api_token:
+        print("[tips] CF_API_TOKEN assente: uso il fallback deterministico.")
+        return _build_fallback_tip(asset_ctx, insight)
+
+    avoid = sorted(avoid_openings or [])[:6]
     system_prompt = (
-        "You are a Senior Equity & Quant Analyst writing premium 'ProTips' for an institutional trading app (InvestingPro style). "
-        "Generate ONE single, highly compelling insight identifying the most striking anomaly in the provided data, translated into ALL requested languages.\n"
-        "STRICT RULES:\n"
-        "1. DO NOT just list numbers schematically. Synthesize a financial narrative. Find the convergence between Technicals and Fundamentals (e.g., 'Trading at a low P/E despite high revenue growth, now pushing a technical breakout', OR 'High Short Float combined with massive RVOL suggests a short squeeze', OR 'Extreme RSI exhaustion at 52W lows').\n"
-        "2. Cite exactly 1 or 2 key figures (like RVOL, Short Float, RSI, or P/E) to support your thesis. Write fluently.\n"
-        "3. Body length per language: 2 flowing, professional sentences (max 320 characters).\n"
-        "4. 'hashtag': ONE single uppercase tag starting with # (e.g., #VALUE_PLAY, #SHORT_SQUEEZE, #BREAKOUT, #YIELD, #OVERSOLD).\n"
-        "5. 'sentiment': EXACTLY 'bull' or 'bear'.\n"
-        f"6. 'translations': Must contain exact keys: {langs_str}. Note: 'zh-rCN' is Simplified Chinese. Each maps to {{\"title\": \"...\", \"body\": \"...\"}}.\n"
-        "7. Respond EXCLUSIVELY with valid JSON, no markdown or extra text."
+        "Markets analyst writing one AI Market Tip. Explain what the signals MEAN and what to watch next; "
+        "never recap the numbers (max 2 figures, woven in). "
+        "Title <=55 chars. Body: 2 sentences, <=190 chars, the 2nd says what would confirm or invalidate. "
+        "No buy/sell advice, no price targets. "
+        f"Style: {random.choice(_VOICES)}." + (f" Don't open with: {'; '.join(avoid)}." if avoid else "") + " "
+        f"Reply JSON only: {{\"<code>\":[\"title\",\"body\"]}} for codes: {_LANG_CODES} "
+        "(zh-rCN=Simplified Chinese, id=Indonesian). Native natural wording; keep tickers and numbers."
     )
-
+    news = (" | news: " + asset_ctx["headlines"][0][:110]) if asset_ctx.get("headlines") else ""
     user_prompt = (
-        f"Generate the multilingual ProTip for:\n"
-        f"- Asset: {asset_ctx['symbol']} ({asset_ctx['sector']})\n"
-        f"- Price & Vol: {asset_ctx['price']} ({asset_ctx['change_24h_pct']:+.2f}%), RVOL: {asset_ctx['rvol']}x\n"
-        f"- Technicals: RSI: {asset_ctx['rsi_14']}, MACD: {macd_txt}, Dist. 52W High: {asset_ctx['dist_52w_high_pct']:+.2f}%\n"
-        f"- Fundamentals: {fund_str}\n"
-        f"- AI Quant Score: {asset_ctx['hybrid_score']}/100\n"
-        f"- Latest News: {news_str}"
+        f"{asset_ctx['symbol']} {asset_ctx['name']} ({asset_ctx['sector']}) | thesis: {insight['thesis']}, "
+        f"{'bullish' if insight['sentiment'] == 'bull' else 'bearish'} | why: {insight['why'] or 'mixed signals, no standout anomaly'} | "
+        f"data: {_compact_data(asset_ctx)}{news}"
     )
+    text = _cf_chat([{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+                    max_out=2400, temperature=0.7, account_id=account_id, api_token=api_token,
+                    tag=asset_ctx["symbol"])
+    translations = _parse_lang_map(_extract_json_obj(text), TARGET_LANGS) if text else {}
 
-    payload = {
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ],
-        "temperature": 0.35, # Leggermente alzata per una narrazione più umana
-        "max_tokens": 2500
-    }
+    if "en" not in translations:
+        print(f"[tips] {asset_ctx['symbol']}: risposta AI non utilizzabile, uso il fallback deterministico.")
+        return _build_fallback_tip(asset_ctx, insight)
 
-    try:
-        resp = requests.post(url, headers=headers, json=payload, timeout=45)
-        if resp.status_code == 200:
-            res_json = resp.json()
-            raw_text = ""
-            if "result" in res_json and isinstance(res_json["result"], dict):
-                raw_text = res_json["result"].get("response", "")
-                if not raw_text and "choices" in res_json["result"]:
-                    raw_text = res_json["result"]["choices"][0]["message"]["content"]
+    missing = [l for l in TARGET_LANGS if l not in translations]
+    if missing:                                              # richiesta minima solo per le lingue mancanti
+        en = translations["en"]
+        text2 = _cf_chat(
+            [{"role": "system", "content": f"Translate title and body naturally. Reply JSON only: {{\"<code>\":[\"title\",\"body\"]}} for codes: {' '.join(missing)} (zh-rCN=Simplified Chinese, id=Indonesian)."},
+             {"role": "user", "content": f"{en['title']} || {en['body']}"}],
+            max_out=1400, temperature=0.2, account_id=account_id, api_token=api_token,
+            tag=f"{asset_ctx['symbol']} +{len(missing)}")
+        translations.update(_parse_lang_map(_extract_json_obj(text2), missing) if text2 else {})
+        missing = [l for l in TARGET_LANGS if l not in translations]
+        if missing:
+            print(f"[tips] {asset_ctx['symbol']}: lingue senza traduzione {missing}, uso il fallback nativo.")
+            translations.update(_build_fallback_tip(asset_ctx, insight, only_langs=missing)["translations"])
 
-            clean_json_str = re.sub(r"^```(?:json)?|```$", "", raw_text.strip(), flags=re.MULTILINE).strip()
-            match = re.search(r"\{.*\}", clean_json_str, re.DOTALL)
-            if match:
-                parsed = json.loads(match.group(0))
-                sentiment_clean = str(parsed.get("sentiment", "")).lower().strip()
-                if sentiment_clean not in ["bull", "bear"]:
-                    sentiment_clean = "bull" if asset_ctx["change_24h_pct"] >= 0 else "bear"
-
-                hashtag_clean = str(parsed.get("hashtag", "#MARKET")).upper().strip()
-                if not hashtag_clean.startswith("#"):
-                    hashtag_clean = "#" + hashtag_clean
-                hashtag_clean = hashtag_clean.split()[0]
-
-                raw_trans = parsed.get("translations", {})
-                translations = {}
-                for lang in TARGET_LANGS:
-                    t_obj = raw_trans.get(lang, {})
-                    if isinstance(t_obj, dict) and t_obj.get("title") and t_obj.get("body"):
-                        translations[lang] = {
-                            "title": str(t_obj["title"]).strip(),
-                            "body": str(t_obj["body"]).strip()
-                        }
-
-                if translations:
-                    fallback_entry = translations.get("en") or translations.get("it") or next(iter(translations.values()))
-                    for lang in TARGET_LANGS:
-                        if lang not in translations:
-                            translations[lang] = fallback_entry
-
-                    return {
-                        "hashtag": hashtag_clean,
-                        "sentiment": sentiment_clean,
-                        "translations": translations
-                    }
-    except Exception as e:
-        print(f"Eccezione chiamata Gemma per {asset_ctx['symbol']}: {e}")
-
-    return _build_fallback_tip(asset_ctx)
+    return {"hashtag": insight["hashtag"], "sentiment": insight["sentiment"], "translations": translations,
+            "thesis": insight["thesis"], "source": "ai"}
 
 
 def already_generated_today(today_str):
@@ -4072,12 +5167,23 @@ def generate_and_save_pro_tips():
 
     account_id = r2_manager.account_id
     tips_list = []
+    # Aperture gia' usate (ultima generazione + questo lotto): l'AI viene istruita a non ripeterle
+    avoid_openings = set()
+    for _pt in _load_previous_tips():
+        _en = (_pt.get("translations") or {}).get("en") or {}
+        for _k in ("title", "body"):
+            if _en.get(_k):
+                avoid_openings.add(_opening_words(_en[_k]))
 
     for asset_ctx in top_8_assets:
         # Novità Isolato: Scarica i fondamentali SOLO per questi 8 asset prima di passarlo all'IA
         asset_ctx['fundamentals'] = _get_fundamentals_for_tip_isolated(asset_ctx['symbol'])
         
-        ai_tip = call_cloudflare_gemma_for_tip(asset_ctx, account_id, CF_API_TOKEN)
+        ai_tip = call_cloudflare_gemma_for_tip(asset_ctx, account_id, CF_API_TOKEN, avoid_openings)
+        _en_new = ai_tip["translations"].get("en") or {}
+        for _k in ("title", "body"):
+            if _en_new.get(_k):
+                avoid_openings.add(_opening_words(_en_new[_k]))
         random_dt = generate_random_timestamp(now_utc, window_minutes=20)
 
         tips_list.append({
@@ -4088,6 +5194,8 @@ def generate_and_save_pro_tips():
             "timestamp": random_dt.strftime("%Y-%m-%d %H:%M:%S"),
             "display_time": random_dt.strftime("%H:%M"),
             "translations": ai_tip["translations"],
+            "thesis": ai_tip.get("thesis", ""),
+            "source": ai_tip.get("source", ""),
             "metrics_snapshot": {
                 "price": asset_ctx["price"],
                 "change_24h_pct": asset_ctx["change_24h_pct"],
@@ -4108,7 +5216,8 @@ def generate_and_save_pro_tips():
     }
 
     r2_manager.write_file(pro_tips_path, final_payload, is_json=True)
-    print(f"Salvati {len(tips_list)} ProTips multilingua su Cloudflare R2 in: {pro_tips_path}")
+    print(f"Salvati {len(tips_list)} ProTips multilingua su Cloudflare R2 in: {pro_tips_path} "
+          f"(AI: {sum(1 for t in tips_list if t['source'] == 'ai')}, fallback: {sum(1 for t in tips_list if t['source'] == 'fallback')})")
 
 # Esecuzione
 generate_and_save_pro_tips()
