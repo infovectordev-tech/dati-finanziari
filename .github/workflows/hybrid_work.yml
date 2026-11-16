@@ -60,8 +60,8 @@ jobs:
           # Librerie base e scientifiche
           pip install --no-cache-dir --upgrade numpy pandas scipy statsmodels
 
-          # Librerie di rete, finanza e Cloudflare R2 (aggiunto boto3)
-          pip install --no-cache-dir --upgrade yfinance==0.2.63 requests urllib3 feedparser lxml boto3
+          # Librerie di rete, finanza e Cloudflare R2 (aggiunto boto3; pypdf = lettura PDF insider Francia/Italia)
+          pip install --no-cache-dir --upgrade yfinance==0.2.63 requests urllib3 feedparser lxml boto3 pypdf
 
           # Analisi tecnica, HTML e NLP (rimossi pacchetti ML pesanti e argostranslate)
           pip install --no-cache-dir --upgrade ta beautifulsoup4 nltk
