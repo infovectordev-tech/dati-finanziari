@@ -100,3 +100,18 @@ jobs:
           
         # Esegue il nuovo script
         run: python scripts/predict_hybrid.py
+
+      # A fine run si svuota la cache Cloudflare di hybrid_results/: così classifiche, file
+      # degli asset, insider e news ripartono tutti insieme con i dati appena scritti
+      # (i file hanno max-age di 4 ore, quindi senza purge ogni URL scade in un momento diverso).
+      - name: Purge Cloudflare cache (hybrid_results)
+        if: success()
+        env:
+          CF_ZONE_ID: ${{ secrets.CF_ZONE_ID }}
+          CF_PURGE_TOKEN: ${{ secrets.CF_PURGE_TOKEN }}
+        run: |
+          curl -fsS -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/purge_cache" \
+            -H "Authorization: Bearer ${CF_PURGE_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data '{"prefixes":["live.tradegpt-vector.com/hybrid_results/"]}'
+          echo
