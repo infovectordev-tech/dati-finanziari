@@ -5215,9 +5215,17 @@ def generate_and_save_pro_tips():
     now_utc = datetime.utcnow()
     today_str = now_utc.strftime("%Y-%m-%d")
 
-    # 1. Finestra oraria: attiva solo dalle 10:00 alle 12:59 UTC
-    if not (10 <= now_utc.hour < 13):
-        print(f"ProTips skippati: ora UTC attuale ({now_utc.strftime('%H:%M')}) fuori dalla finestra 10:00-13:00 UTC.")
+    # 1. Orario target casuale ma deterministico per giorno (stesso valore in tutte le run
+    #    del giorno), scelto tra 07:00 e 13:59 UTC. La generazione parte alla prima run
+    #    utile a partire da quell'orario; se le run nella finestra saltano o ritardano
+    #    (GitHub Actions cron e' best-effort), le run successive recuperano comunque
+    #    (catch-up) cosi' da avere almeno un aggiornamento al giorno.
+    _rng = random.Random(f"protips-{today_str}")
+    target_minute = _rng.randint(7 * 60, 14 * 60 - 1)
+    now_minute = now_utc.hour * 60 + now_utc.minute
+    if now_minute < target_minute:
+        print(f"ProTips skippati: ora UTC attuale ({now_utc.strftime('%H:%M')}) prima dell'orario target odierno "
+              f"({target_minute // 60:02d}:{target_minute % 60:02d} UTC).")
         return
 
     # 2. Controllo esecuzione giornaliera su R2
