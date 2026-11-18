@@ -276,13 +276,18 @@ def _assemble_insider_payload(trades, currency, source):
     trades = sorted((t for t in norm if t["date"] >= cutoff_all), key=lambda t: t["date"], reverse=True)
     if not trades:
         return None
-    days, buys, sells = WINDOW_STEPS[-1], [], []
-    for days in WINDOW_STEPS:
-        cut = datetime.now() - timedelta(days=days)
+    # Si sceglie la finestra piu' piccola che contiene SIA acquisti SIA vendite: fermarsi alla prima con
+    # "qualcosa" dava barre 100% vendite mentre nell'elenco comparivano acquisti piu' vecchi.
+    # Se non esiste una finestra con entrambi, si usa la piu' ampia (quella da cui arriva l'elenco).
+    days = WINDOW_STEPS[-1]
+    buys = sells = []
+    for d_ in WINDOW_STEPS:
+        cut = datetime.now() - timedelta(days=d_)
         w = [t for t in trades if t["date"] >= cut]
         buys = [t for t in w if t["type"] == "buy"]
         sells = [t for t in w if t["type"] == "sell"]
-        if buys or sells:
+        days = d_
+        if buys and sells:
             break
     return {
         "v": 1,
@@ -2462,6 +2467,68 @@ def get_sentiment_for_all_symbols(symbol_list):
                         "Debt to Equity": safe_value("debtToEquity"),
                         "Dividend Yield": safe_value("dividendYield")
                     }
+
+                    # ------------------------------------------------------------------
+                    # RIGHE AGGIUNTIVE PER IL FAIR VALUE (solo in CODA: i parser dell'app
+                    # leggono per NOME riga, ma NON cambiare ordine/nomi delle righe sopra
+                    # e NON creare nuove tabelle: altri parser usano indici/`.last()`).
+                    # Valori sempre numerici puri (niente '%'), "N/A" se non disponibili.
+                    # Zero chiamate di rete extra: tutto viene dallo stesso `info`.
+                    # ------------------------------------------------------------------
+                    # Blocco ISOLATO: un errore qui non deve mai far sparire la tabella base.
+                    try:
+                        def _fv_num(k):
+                            v = info.get(k)
+                            if isinstance(v, bool) or not isinstance(v, (int, float)):
+                                return None
+                            return float(v) if (v == v and abs(v) != float("inf")) else None
+
+                        # Dati di bilancio e prezzo possono avere valute diverse (ADR, LSE in pence):
+                        # i rapporti tra le due grandezze si calcolano solo se la valuta coincide.
+                        _fv_same_ccy = bool(info.get("currency")) and info.get("currency") == info.get("financialCurrency")
+
+                        _fv_beta = _fv_num("beta")
+                        _fv_roe = _fv_num("returnOnEquity")
+                        _fv_pb = _fv_num("priceToBook")
+                        _fv_fcf, _fv_mcap = _fv_num("freeCashflow"), _fv_num("marketCap")
+                        _fv_debt, _fv_cash = _fv_num("totalDebt"), _fv_num("totalCash")
+                        _fv_ebitda = _fv_num("ebitda")
+                        _fv_rev, _fv_opm = _fv_num("totalRevenue"), _fv_num("operatingMargins")
+                        _fv_bvps, _fv_sh = _fv_num("bookValue"), _fv_num("sharesOutstanding")
+
+                        # FCF Yield = free cash flow / market cap (frazione)
+                        _fv_fcf_yield = None
+                        if _fv_same_ccy and _fv_fcf is not None and _fv_mcap and _fv_mcap > 0:
+                            _fv_fcf_yield = _fv_fcf / _fv_mcap
+
+                        # Net Debt / EBITDA (multiplo; rapporto tra due grandezze di bilancio)
+                        _fv_nd_ebitda = None
+                        if _fv_debt is not None and _fv_ebitda and _fv_ebitda > 0:
+                            _fv_nd_ebitda = (_fv_debt - (_fv_cash or 0.0)) / _fv_ebitda
+
+                        # ROIC approssimato = NOPAT / capitale investito (debito + patrimonio netto - cassa)
+                        # NOPAT = margine operativo * ricavi * (1 - 25% aliquota generica).
+                        _fv_roic = None
+                        if _fv_same_ccy and _fv_rev and _fv_rev > 0 and _fv_opm is not None and _fv_debt is not None:
+                            _eq = (_fv_bvps * _fv_sh) if (_fv_bvps is not None and _fv_sh) else 0.0
+                            _base = _fv_debt + max(_eq, 0.0)
+                            _invested = max(_base - (_fv_cash or 0.0), 0.25 * _base)  # evita denominatori ~0
+                            if _base > 0 and _invested > 0:
+                                _fv_roic = (_fv_opm * _fv_rev * 0.75) / _invested
+
+                        def _fv_row(x, lo, hi, nd=4):
+                            return round(x, nd) if (x is not None and lo <= x <= hi) else "N/A"
+
+                        fondamentali["Beta"] = _fv_row(_fv_beta, -1.0, 4.0, 2)
+                        fondamentali["Return on Equity"] = _fv_row(_fv_roe, -5.0, 5.0)
+                        fondamentali["ROIC (approx)"] = _fv_row(_fv_roic, -5.0, 5.0)
+                        fondamentali["FCF Yield"] = _fv_row(_fv_fcf_yield, -1.0, 1.0)
+                        fondamentali["Net Debt / EBITDA"] = _fv_row(_fv_nd_ebitda, -20.0, 50.0, 2)
+                        fondamentali["Price to Book"] = _fv_row(_fv_pb, 0.01, 500.0, 2)
+                    except Exception:
+                        for _k in ("Beta", "Return on Equity", "ROIC (approx)", "FCF Yield", "Net Debt / EBITDA", "Price to Book"):
+                            fondamentali.setdefault(_k, "N/A")
+
                     tabella_fondamentali = pd.DataFrame(fondamentali.items(), columns=["Fondamentale", "Valore"]).to_html(index=False, border=0)
                 except: pass
 
