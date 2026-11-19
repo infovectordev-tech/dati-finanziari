@@ -79,11 +79,8 @@ TICKER_MAP = {
     "CHFJPY": "CHFJPY=X", "EURAUD": "EURAUD=X", "EURNZD": "EURNZD=X",
     "EURCAD": "EURCAD=X", "EURCHF": "EURCHF=X", "GBPCHF": "GBPCHF=X",
     "AUDCAD": "AUDCAD=X",
-    "SPX500": "^GSPC", "DJ30": "^DJI", "NAS100": "^NDX", "NASCOMP": "^IXIC",
-    "RUS2000": "^RUT", "VIX": "^VIX", "EU50": "^STOXX50E", "ITA40": "FTSEMIB.MI",
-    "GER40": "^GDAXI", "UK100": "^FTSE", "FRA40": "^FCHI", "SWI20": "^SSMI",
-    "ESP35": "^IBEX", "NETH25": "^AEX", "JPN225": "^N225", "HKG50": "^HSI",
-    "CHN50": "000001.SS", "IND50": "^NSEI", "KOR200": "^KS200",
+    # Indici (SPX500, VIX, GER40, ...) rimossi: sostituiti dai rispettivi ETF (SPY, VIXY, EWG, ...),
+    # allineato a predict_hybrid.py. Non reinserirli: finirebbero nei top movers dell'app.
     "BTCUSD": "BTC-USD", "ETHUSD": "ETH-USD", "LTCUSD": "LTC-USD",
     "XRPUSD": "XRP-USD", "BCHUSD": "BCH-USD", "EOSUSD": "EOS-USD",
     "XLMUSD": "XLM-USD", "ADAUSD": "ADA-USD", "TRXUSD": "TRX-USD",
