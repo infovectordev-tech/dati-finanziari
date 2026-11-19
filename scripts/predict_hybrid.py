@@ -1037,6 +1037,7 @@ asset_sector_map = {
     "LDO.MI": "7. Industrials & Defense", "BKNG": "7. Industrials & Defense",
     "SIE.DE": "7. Industrials & Defense", "EMAAR.AE": "7. Industrials & Defense",
     "SPCX": "7. Industrials & Defense",
+    "ANT": "1. Big Tech, Software & Internet",
     "OIL": "8. Energy (Oil & Gas)", "NATGAS": "8. Energy (Oil & Gas)",
     "XOM": "8. Energy (Oil & Gas)", "CVX": "8. Energy (Oil & Gas)",
     "PBR": "8. Energy (Oil & Gas)", "NRG": "8. Energy (Oil & Gas)",
@@ -1102,10 +1103,24 @@ asset_sector_map = {
     "SUGAR": "16. Agricultural Commodities"
 }
 
+# --- TICKER ESCLUSI DALLE LISTE COMUNI ---
+# I simboli qui elencati vengono analizzati normalmente (pagina {SYM}_RESULT.html, archivio news,
+# insider, storico, backtest), ma NON compaiono nelle liste condivise: classifica / classificaPRO,
+# momentum, settori (non pesano sul punteggio del settore), fire, feed news.html, daily brief,
+# pro tips e come "partner" nelle correlazioni degli altri asset.
+# Utile per nuove quotazioni (storico corto) o simboli non ancora registrati nelle vecchie app.
+# Lista vuota = nessuna esclusione.
+EXCLUDED_FROM_RANKINGS = ["ANT"]
+
+_EXCLUDED_FROM_RANKINGS_SET = {str(s).strip().upper() for s in EXCLUDED_FROM_RANKINGS if str(s).strip()}
+
+def is_excluded_from_rankings(symbol):
+    return bool(_EXCLUDED_FROM_RANKINGS_SET) and str(symbol).strip().upper() in _EXCLUDED_FROM_RANKINGS_SET
+
 TICKER_MAP = {
     "AAPL": "AAPL", "MSFT": "MSFT", "GOOGL": "GOOGL", "AMZN": "AMZN", "META": "META",
     "TSLA": "TSLA", "V": "V", "JPM": "JPM", "JNJ": "JNJ", "WMT": "WMT",
-    "NVDA": "NVDA", "PYPL": "PYPL", "SPCX": "SPCX", "DIS": "DIS", "NFLX": "NFLX", "NIO": "NIO",
+    "NVDA": "NVDA", "PYPL": "PYPL", "SPCX": "SPCX", "ANT": "ANT", "DIS": "DIS", "NFLX": "NFLX", "NIO": "NIO",
     "NRG": "NRG", "ADBE": "ADBE", "INTC": "INTC", "CSCO": "CSCO", "PFE": "PFE",
     "KO": "KO", "PEP": "PEP", "MRK": "MRK", "ABT": "ABT", "XOM": "XOM",
     "MA": "MA", "BRK-B": "BRK-B", "AVGO": "AVGO", "UNH": "UNH",
@@ -1184,6 +1199,7 @@ symbol_name_map = {
     "JNJ": ["Johnson & Johnson", "JNJ"], "WMT": ["Walmart"], "NVDA": ["NVIDIA", "Nvidia Corp."],
     "PYPL": ["PayPal"],
     "SPCX": ["SpaceX", "Space X", "Space Exploration Technologies", "Space Exploration Technologies Corp.", "Space Exploration Technologies Corporation", "Crew Dragon", "Starlink"],
+    "ANT": ["Anthropic", "Anthropic, PBC", "Anthropic PBC"],
     "DIS": ["Disney", "The Walt Disney Company"], "NFLX": ["Netflix"],
     "NIO": ["NIO Inc."], "NRG": ["NRG Energy"], "ADBE": ["Adobe", "Adobe Inc."],
     "INTC": ["Intel", "Intel Corporation"], "CSCO": ["Cisco", "Cisco Systems"], "PFE": ["Pfizer"],
@@ -2877,7 +2893,7 @@ print("Inizio calcolo globale del Sentiment per i simboli...")
 sentiment_for_symbols, percentuali_combine, all_news_entries, indicator_data, fundamental_data, crescita_settimanale, dati_storici_all, momentum_results, market_breadth_data = get_sentiment_for_all_symbols(symbol_list)
 
 # --- CLASSIFICA PRINCIPALE ---
-sorted_symbols = sorted(percentuali_combine.items(), key=lambda x: x[1], reverse=True)
+sorted_symbols = sorted(((s, v) for s, v in percentuali_combine.items() if not is_excluded_from_rankings(s)), key=lambda x: x[1], reverse=True)
 
 html_classifica = ["<html><head><title>Classifica dei Simboli</title></head><body>",
                    "<h1>Classifica dei Simboli (Hybrid Score)</h1>",
@@ -2966,7 +2982,7 @@ html_classifica_pro.append("</table></body></html>")
 r2_manager.write_file(pro_path, "\n".join(html_classifica_pro), is_json=False)
 
 # --- CLASSIFICA MOMENTUM ---
-sorted_momentum = sorted(momentum_results.items(), key=lambda x: x[1], reverse=True)
+sorted_momentum = sorted(((s, v) for s, v in momentum_results.items() if not is_excluded_from_rankings(s)), key=lambda x: x[1], reverse=True)
 html_mom = [
     "<html><head><title>Classifica Momentum</title>",
     "<style>",
@@ -3001,6 +3017,7 @@ r2_manager.write_file(mom_path, "\n".join(html_mom), is_json=False)
 # --- CLASSIFICA SETTORI ---
 sector_assets = defaultdict(list)
 for symbol, score in percentuali_combine.items():
+    if is_excluded_from_rankings(symbol): continue
     sec = asset_sector_map.get(symbol, "Altro")
     avg_liquidity_old = 0.0
     rvol = 1.0 
@@ -3149,6 +3166,9 @@ for symbol, entries in news_by_symbol.items():
     file_path_json = f"{ARCHIVE_FOLDER}/{symbol.upper()}.json"
     r2_manager.write_file(file_path_json, symbol_archive, is_json=True)
 
+    # L'archivio per-simbolo resta; il feed comune news.html no
+    if is_excluded_from_rankings(symbol): continue
+
     sorted_by_sentiment = sorted(all_entries_unique, key=lambda x: x[1])
     if len(sorted_by_sentiment) > 10:
         app_entries = sorted_by_sentiment[:5] + sorted_by_sentiment[-5:]
@@ -3165,7 +3185,7 @@ html_news.append("</table></body></html>")
 r2_manager.write_file(news_path, "\n".join(html_news), is_json=False)
 
 # --- CLASSIFICA FIRE ---
-sorted_crescita = sorted([(s, g) for s, g in crescita_settimanale.items() if g is not None], key=lambda x: (x[1], x[0]), reverse=True)
+sorted_crescita = sorted([(s, g) for s, g in crescita_settimanale.items() if g is not None and not is_excluded_from_rankings(s)], key=lambda x: (x[1], x[0]), reverse=True)
 html_fire = ["<html><head><title>Classifica per Crescita</title></head><body>",
              "<h1>Asset Ordinati per Crescita Settimanale</h1>",
              "<table border='1'><tr><th>Simbolo</th><th>Crescita 7gg (%)</th></tr>"]
@@ -3187,6 +3207,7 @@ def calculate_support_resistance(df):
 all_analyzed_assets = []
 
 for sym, score in percentuali_combine.items():
+    if is_excluded_from_rankings(sym): continue
     if sym not in dati_storici_all: continue
     df = dati_storici_all[sym]
     if len(df) < 20: continue
@@ -3325,7 +3346,8 @@ def calcola_correlazioni(dati_storici_all):
         
         for asset2 in assets:
             if asset1 == asset2: continue
-            
+            if is_excluded_from_rankings(asset2): continue
+
             s2 = returns[asset2]
             common = s1.index.intersection(s2.index)
             if len(common) < 60: continue
@@ -4752,6 +4774,8 @@ def select_top_8_hot_tickers(dati_storici_all, indicator_data, percentuali_combi
 
     for sym, df in dati_storici_all.items():
         if df is None or len(df) < 21:
+            continue
+        if is_excluded_from_rankings(sym):
             continue
 
         try:
