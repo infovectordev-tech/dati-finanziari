@@ -52,6 +52,46 @@ sia.lexicon.update(LEXICON)
 # --- SECRETS E VARIABILI D'AMBIENTE ---
 FMP_API_KEY = os.getenv("FMP_API_KEY")
 
+# ==============================================================================
+# PREZZI MOLTO PICCOLI (es. SHIB ~0.000004)
+# ==============================================================================
+SOGLIA_MICRO_PREZZO = 0.001
+
+def is_micro_price(price):
+    try: return 0 < abs(float(price)) < SOGLIA_MICRO_PREZZO
+    except (TypeError, ValueError): return False
+
+def fmt_micro(val):
+    # Decimali fissi (mai notazione scientifica: l'app mostra alcune stringhe cosi' come sono)
+    return f"{float(val):.12f}".rstrip("0").rstrip(".")
+
+def scarica_storico(ticker, period="5y"):
+    data = yf.download(ticker, period=period, auto_adjust=True, progress=False)
+    if isinstance(data.columns, pd.MultiIndex):
+        try: data = data.xs(ticker, axis=1, level=1)
+        except: pass
+    if ticker != "SHIB-USD" or data.empty:
+        return data
+
+    # Yahoo arrotonda lo storico di SHIB-USD a 6 decimali (prezzi a gradini):
+    # ricostruiamo OHLC in USD da SHIB-KRW / KRW=X. Il volume resta quello di SHIB-USD.
+    krw = yf.download("SHIB-KRW", period=period, auto_adjust=True, progress=False)
+    fx = yf.download("KRW=X", period=period, auto_adjust=True, progress=False)
+    for df in (krw, fx):
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+    if krw.empty or fx.empty or fx["Close"].dropna().empty:
+        print("SHIB: SHIB-KRW o KRW=X non disponibili, asset saltato.")
+        return data.iloc[0:0]  # meglio nessun dato che dati falsati
+
+    krw = krw.dropna(subset=["Close"])
+    # Il forex non quota nel weekend: si usa l'ultimo cambio disponibile
+    cambio = fx["Close"].dropna().reindex(krw.index, method="ffill").bfill()
+    data = data.reindex(krw.index)
+    for col in ["Open", "High", "Low", "Close"]:
+        data[col] = krw[col] / cambio
+    return data
+
 # --- CLASSE GESTORE CLOUDFLARE R2 ---
 class CloudflareR2Manager:
     def __init__(self, bucket_name="trading-data", base_folder=""):
@@ -2408,13 +2448,9 @@ def get_sentiment_for_all_symbols(symbol_list):
 
         try:
             ticker = str(adjusted_symbol).strip().upper()
-            data = yf.download(ticker, period="5y", auto_adjust=True, progress=False)
+            data = scarica_storico(ticker)
 
             if not data.empty:
-                if isinstance(data.columns, pd.MultiIndex):
-                     try: data = data.xs(ticker, axis=1, level=1)
-                     except: pass
-                
                 data = data.replace(0, np.nan)
                 data = data.ffill()
                 data = data.bfill()
@@ -2497,8 +2533,19 @@ def get_sentiment_for_all_symbols(symbol_list):
                     "BB Lower": round(bb.bollinger_lband().iloc[-1], 2),
                     "BB Width": round(bb.bollinger_wband().iloc[-1], 4),
                 }
+                micro = is_micro_price(current_price)
+                if micro:
+                    # round(..., 2) azzererebbe MACD, EMA e Bollinger
+                    indicators.update({
+                        "MACD Line": float(macd_line),
+                        "MACD Signal": float(macd_signal),
+                        "EMA (10)": float(ema_10),
+                        "BB Upper": float(bb.bollinger_hband().iloc[-1]),
+                        "BB Lower": float(bb.bollinger_lband().iloc[-1]),
+                    })
                 indicator_data[symbol] = indicators
-                tabella_indicatori = pd.DataFrame(indicators.items(), columns=["Indicatore", "Valore"]).to_html(index=False, border=0)
+                righe_indicatori = [(k, fmt_micro(v) if micro else v) for k, v in indicators.items()]
+                tabella_indicatori = pd.DataFrame(righe_indicatori, columns=["Indicatore", "Valore"]).to_html(index=False, border=0)
                 
                 tk_obj = yf.Ticker(adjusted_symbol)
                 try:
@@ -2717,6 +2764,10 @@ def get_sentiment_for_all_symbols(symbol_list):
                 
                 hist = data.copy()
                 hist['Date'] = hist.index.strftime('%Y-%m-%d')
+                if is_micro_price(current_price):
+                    # il default di pandas (6 decimali) rimetterebbe i prezzi a gradini
+                    for col in ['Close', 'High', 'Low', 'Open']:
+                        hist[col] = hist[col].map(fmt_micro)
                 dati_storici_html = hist[['Date','Close','High','Low','Open','Volume']].to_html(index=False, border=1)
 
                 sells_data = None
@@ -2977,19 +3028,19 @@ for symbol, score in sorted_symbols:
                     max_52w = high_p.iloc[-253:-1].max()
                     min_52w = low_p.iloc[-253:-1].min()
                     if high_today >= max_52w:
-                        info_52w = f"Nuovo Max 52W ({high_today:.2f})"
+                        info_52w = f"Nuovo Max 52W ({fmt_micro(high_today) if is_micro_price(high_today) else format(high_today, '.2f')})"
                         trovato_52w = True
                     elif low_today <= min_52w:
-                        info_52w = f"Nuovo Min 52W ({low_today:.2f})"
+                        info_52w = f"Nuovo Min 52W ({fmt_micro(low_today) if is_micro_price(low_today) else format(low_today, '.2f')})"
                         trovato_52w = True
                         
                 if not trovato_52w:
                     max_5g = high_p.iloc[-6:-1].max()
                     min_5g = low_p.iloc[-6:-1].min()
                     if high_today >= max_5g:
-                        info_52w = f"Nuovo Max 5G ({high_today:.2f})"
+                        info_52w = f"Nuovo Max 5G ({fmt_micro(high_today) if is_micro_price(high_today) else format(high_today, '.2f')})"
                     elif low_today <= min_5g:
-                        info_52w = f"Nuovo Min 5G ({low_today:.2f})"
+                        info_52w = f"Nuovo Min 5G ({fmt_micro(low_today) if is_micro_price(low_today) else format(low_today, '.2f')})"
                     
             if len(close_p) >= 21:
                 s5 = close_p.rolling(window=5).mean()
@@ -3252,6 +3303,8 @@ def calculate_support_resistance(df):
     if len(df) < 20: return 0.0, 0.0
     recent_low = df['Low'].tail(20).min()
     recent_high = df['High'].tail(20).max()
+    if is_micro_price(recent_high):
+        return float(recent_low), float(recent_high)
     return round(recent_low, 2), round(recent_high, 2)
 
 all_analyzed_assets = []
@@ -3374,7 +3427,7 @@ for cand in all_analyzed_assets:
     sym = cand['sym']
     name = symbol_name_map.get(sym, [sym])[0]
     lang_attrs = get_randomized_lang_attributes(cand['trait'], INSIGHT_DICT)
-    html_v2.append(f"<div class='asset_data' data-ticker='${sym}' data-clean-ticker='{sym}' data-name='{name}' data-score='{int(cand['score'])}' data-anomaly='{cand['anomaly_score']}' {lang_attrs} data-confluence='{cand['confluence']}' data-volatility='{cand['volatility']}' data-move='{cand['expected_move']}' data-sup='{cand['sup']}' data-res='{cand['res']}'></div>")
+    html_v2.append(f"<div class='asset_data' data-ticker='${sym}' data-clean-ticker='{sym}' data-name='{name}' data-score='{int(cand['score'])}' data-anomaly='{cand['anomaly_score']}' {lang_attrs} data-confluence='{cand['confluence']}' data-volatility='{cand['volatility']}' data-move='{cand['expected_move']}' data-sup='{fmt_micro(cand['sup']) if is_micro_price(cand['sup']) else cand['sup']}' data-res='{fmt_micro(cand['res']) if is_micro_price(cand['res']) else cand['res']}'></div>")
 
 html_v2.append("</body></html>")
 v2_path = f"{TARGET_FOLDER}/daily_brief_v2_data.html"
@@ -3387,6 +3440,11 @@ print("Daily Brief V2 (Dynamic Copy & Macro) salvato con successo su R2!")
 # ==============================================================================
 def calcola_correlazioni(dati_storici_all):
     returns = {sym: np.log(df["Close"]).diff().dropna() for sym, df in dati_storici_all.items() if "Close" in df.columns}
+    # Data-quality gate: prices quantized by the feed (e.g. SHIB-USD ~0.000012 delivered with
+    # 6 decimals) or stale/ffilled series give mostly-zero returns. Those zeros made the
+    # direction-concordance term collapse to ~0% (mapped to -1), producing fake "inverse"
+    # correlations against every asset. Drop series that are too flat to be meaningful.
+    returns = {sym: r for sym, r in returns.items() if len(r) > 0 and (r == 0).mean() <= 0.20}
     results = {}
     assets = list(returns.keys())
     
@@ -3427,7 +3485,11 @@ def calcola_correlazioni(dati_storici_all):
             try: s_r, _ = spearmanr(x, y)
             except: s_r = 0.0
             
-            conc = (np.sign(x) == np.sign(y)).mean() * 100
+            # Concordance only on days where both moved: a zero return (holiday ffill,
+            # flat close) is "no information", not "opposite direction".
+            moved = (x != 0) & (y != 0)
+            if moved.sum() < 30: continue
+            conc = (np.sign(x[moved]) == np.sign(y[moved])).mean() * 100
             conc_mapped = (conc / 50.0) - 1.0
             score = (p_r + s_r + conc_mapped) / 3.0
             
@@ -3552,6 +3614,7 @@ def format_smart_price(val):
         if v >= 1000: return f"{v:,.2f}"
         if v >= 1: return f"{v:.2f}"
         if v >= 0.01: return f"{v:.4f}"
+        if is_micro_price(v): return f"{v:.10f}"
         return f"{v:.6f}"
     except:
         return "0.00"
@@ -3561,6 +3624,7 @@ def format_smart_oscillator(val):
         v = float(val)
         if abs(v) >= 10: return f"{v:+.2f}"
         if abs(v) >= 0.1: return f"{v:+.3f}"
+        if 0 < abs(v) < 0.00001: return f"{v:+.10f}"
         return f"{v:+.5f}"
     except:
         return "0.00"
@@ -3767,7 +3831,8 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
                 h_v = float(r['High'].iloc[0]) if isinstance(r['High'], pd.Series) else float(r['High'])
                 l_v = float(r['Low'].iloc[0]) if isinstance(r['Low'], pd.Series) else float(r['Low'])
                 c_v = float(r['Close'].iloc[0]) if isinstance(r['Close'], pd.Series) else float(r['Close'])
-                chart_records.append({"time": d_str, "open": round(o_v, 4), "high": round(h_v, 4), "low": round(l_v, 4), "close": round(c_v, 4)})
+                nd = 12 if is_micro_price(c_v) else 4
+                chart_records.append({"time": d_str, "open": round(o_v, nd), "high": round(h_v, nd), "low": round(l_v, nd), "close": round(c_v, nd)})
             chart_json_str = json.dumps(chart_records)
 
             play_link = f"https://play.google.com/store/apps/details?id=com.vectordev.einsight&referrer=utm_source%3Dwebsite%26utm_medium%3Dasset_page%26utm_campaign%3D{upper_sym}"
@@ -4517,6 +4582,12 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
         candleSeries.setData(rawData);
         areaSeries.setData(rawData.map(item => ({{ time: item.time, value: item.close }})));
 
+        if (totalBars > 0 && rawData[totalBars - 1].close < 0.001) {{
+            const microFormat = {{ type: 'price', precision: 10, minMove: 0.0000000001 }};
+            candleSeries.applyOptions({{ priceFormat: microFormat }});
+            areaSeries.applyOptions({{ priceFormat: microFormat }});
+        }}
+
         if (totalBars > 90) {{
             chart.timeScale().setVisibleLogicalRange({{ from: totalBars - 90, to: totalBars - 1 }});
         }} else {{
@@ -4537,6 +4608,7 @@ def generate_investing_style_seo_pages(dati_storici_all, crescita_settimanale, n
             if (v >= 1000) return v.toLocaleString('en-US', {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
             if (v >= 1) return v.toFixed(2);
             if (v >= 0.01) return v.toFixed(4);
+            if (v > 0 && v < 0.001) return v.toFixed(10);
             return v.toFixed(6);
         }}
 
@@ -4881,7 +4953,7 @@ def select_top_8_hot_tickers(dati_storici_all, indicator_data, percentuali_combi
                 "symbol": sym,
                 "name": symbol_name_map.get(sym, [sym])[0],
                 "sector": re.sub(r'^\d+\.\s*', '', asset_sector_map.get(sym, "Global Markets")),
-                "price": round(curr_price, 4) if curr_price < 1 else round(curr_price, 2),
+                "price": round(curr_price, 12) if is_micro_price(curr_price) else (round(curr_price, 4) if curr_price < 1 else round(curr_price, 2)),
                 "change_24h_pct": round(chg_24h, 2),
                 "rvol": round(rvol, 2),
                 "rsi_14": round(rsi, 1),
