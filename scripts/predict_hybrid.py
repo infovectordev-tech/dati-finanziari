@@ -65,8 +65,26 @@ def fmt_micro(val):
     # Decimali fissi (mai notazione scientifica: l'app mostra alcune stringhe cosi' come sono)
     return f"{float(val):.12f}".rstrip("0").rstrip(".")
 
+# Ticker Yahoo "riciclati": prima di questa data lo storico appartiene a un altro asset.
+# Toncoin e' diventato Gram (06/2026): Yahoo ha abbandonato TON11419-USD (1 sola candela) e su
+# GRAM-USD, prima del 12/06/2026, ci sono i prezzi di un vecchio token omonimo (~0.002).
+STORICO_VALIDO_DAL = {"GRAM-USD": "2026-06-12"}
+
+def controlla_salute_storico(ticker, data):
+    # Un ticker rinominato/delistato non genera errori: senza questo avviso passa inosservato
+    if data.empty:
+        print(f"⚠️ TICKER SOSPETTO {ticker}: nessun dato da Yahoo")
+        return
+    giorni_fermo = (pd.Timestamp.now().normalize() - data.index[-1].tz_localize(None)).days
+    if len(data) < 30:
+        print(f"⚠️ TICKER SOSPETTO {ticker}: solo {len(data)} candele (rinominato su Yahoo o appena quotato?)")
+    if giorni_fermo > 7:
+        print(f"⚠️ TICKER SOSPETTO {ticker}: storico fermo da {giorni_fermo} giorni (delistato?)")
+
 def scarica_storico(ticker, period="5y"):
     data = yf.download(ticker, period=period, auto_adjust=True, progress=False)
+    if ticker in STORICO_VALIDO_DAL and not data.empty:
+        data = data[data.index >= STORICO_VALIDO_DAL[ticker]]
     if isinstance(data.columns, pd.MultiIndex):
         try: data = data.xs(ticker, axis=1, level=1)
         except: pass
@@ -1251,7 +1269,7 @@ TICKER_MAP = {
     "ETCUSD": "ETC-USD", "ZECUSD": "ZEC-USD", "BNBUSD": "BNB-USD",
     "DOGEUSD": "DOGE-USD", "USDTUSD": "USDT-USD", "LINKUSD": "LINK-USD",
     "ATOMUSD": "ATOM-USD", "XTZUSD": "XTZ-USD",
-    "USDCUSD": "USDC-USD", "SOLUSD": "SOL-USD", "TONUSD": "TON11419-USD",
+    "USDCUSD": "USDC-USD", "SOLUSD": "SOL-USD", "TONUSD": "GRAM-USD",
     "AVAXUSD": "AVAX-USD", "DOTUSD": "DOT-USD", "NEARUSD": "NEAR-USD",
     "APTUSD": "APT21794-USD", "SUIUSD": "SUI20947-USD", "ICPUSD": "ICP-USD",
     "KASUSD": "KAS-USD", "STXUSD": "STX4847-USD", "SEIUSD": "SEI-USD",
@@ -2449,6 +2467,7 @@ def get_sentiment_for_all_symbols(symbol_list):
         try:
             ticker = str(adjusted_symbol).strip().upper()
             data = scarica_storico(ticker)
+            controlla_salute_storico(ticker, data)
 
             if not data.empty:
                 data = data.replace(0, np.nan)
