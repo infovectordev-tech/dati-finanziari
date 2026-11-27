@@ -167,7 +167,11 @@ def recupera_sedute_perse(ticker, data, html_precedente):
     print(f"♻️ {ticker}: recuperate sedute assenti da Yahoo: "
           f"{', '.join(d.strftime('%Y-%m-%d') for d in recuperate)}")
     extra = pd.DataFrame.from_dict(recuperate, orient="index")
-    return pd.concat([data, extra.reindex(columns=data.columns)]).sort_index()
+    unito = pd.concat([data, extra.reindex(columns=data.columns)]).sort_index()
+    # Le barre recuperate sono float: senza questo il volume uscirebbe come "5839554.0"
+    if "Volume" in data.columns and pd.api.types.is_integer_dtype(data["Volume"]):
+        unito["Volume"] = unito["Volume"].fillna(0).round().astype(data["Volume"].dtype)
+    return unito
 
 # --- CLASSE GESTORE CLOUDFLARE R2 ---
 class CloudflareR2Manager:
