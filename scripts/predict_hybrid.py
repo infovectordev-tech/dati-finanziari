@@ -110,6 +110,65 @@ def scarica_storico(ticker, period="5y"):
         data[col] = krw[col] / cambio
     return data
 
+# Yahoo a volte "perde" per ore la seduta del giorno prima (tipicamente sulle borse europee,
+# nelle run poco dopo l'apertura): la riga manca o ha Close vuoto. Dato che il file viene
+# riscritto da zero, una seduta gia' pubblicata sparirebbe dal grafico dell'app.
+GIORNI_RECUPERO_SEDUTE = 10
+
+def recupera_sedute_perse(ticker, data, html_precedente):
+    """Reinserisce le sedute recenti presenti nel file pubblicato e assenti nel download."""
+    if data.empty:
+        return data
+    # Una riga senza chiusura diventerebbe, con ffill, una falsa seduta piatta
+    data = data.dropna(subset=["Close"])
+    if data.empty or not html_precedente:
+        return data
+    tabella = re.search(r"Dati Storici.*?<table[^>]*>(.*?)</table>", html_precedente, re.S)
+    if not tabella:
+        return data
+
+    colonne = ["Close", "High", "Low", "Open", "Volume"]  # ordine della tabella HTML
+    precedenti = {}
+    for riga in re.findall(r"<tr[^>]*>(.*?)</tr>", tabella.group(1), re.S):
+        celle = [c.strip() for c in re.findall(r"<td[^>]*>(.*?)</td>", riga, re.S)]
+        if len(celle) < 6 or not re.match(r"\d{4}-\d{2}-\d{2}$", celle[0]):
+            continue
+        try:
+            valori = dict(zip(colonne, map(float, celle[1:6])))
+        except ValueError:
+            continue
+        if valori["Close"] > 0:
+            precedenti[celle[0]] = valori
+
+    presenti = {d.strftime("%Y-%m-%d"): d for d in data.index}
+    oggi = datetime.utcnow().date()
+    dal = (oggi - timedelta(days=GIORNI_RECUPERO_SEDUTE)).strftime("%Y-%m-%d")
+    recuperate = {}
+    for giorno in sorted(precedenti):
+        if giorno in presenti or not (dal <= giorno <= oggi.strftime("%Y-%m-%d")):
+            continue
+        comuni = [g for g in precedenti if g < giorno and g in presenti]
+        if not comuni:
+            continue
+        # Se nel frattempo c'e' stato uno stacco dividendo/split, auto_adjust ha riscalato
+        # lo storico: la barra recuperata va portata sulla stessa base.
+        base = max(comuni)
+        fattore = float(data.loc[presenti[base], "Close"]) / precedenti[base]["Close"]
+        if not 0.5 < fattore < 2:
+            continue
+        if abs(fattore - 1) < 0.0001:
+            fattore = 1.0
+        recuperate[pd.Timestamp(giorno, tz=data.index.tz)] = {
+            c: v if c == "Volume" else v * fattore for c, v in precedenti[giorno].items()
+        }
+
+    if not recuperate:
+        return data
+    print(f"♻️ {ticker}: recuperate sedute assenti da Yahoo: "
+          f"{', '.join(d.strftime('%Y-%m-%d') for d in recuperate)}")
+    extra = pd.DataFrame.from_dict(recuperate, orient="index")
+    return pd.concat([data, extra.reindex(columns=data.columns)]).sort_index()
+
 # --- CLASSE GESTORE CLOUDFLARE R2 ---
 class CloudflareR2Manager:
     def __init__(self, bucket_name="trading-data", base_folder=""):
@@ -153,6 +212,16 @@ class CloudflareR2Manager:
         except Exception as e:
             print(f"Errore generico lettura {full_path}: {e}")
             return {}
+
+    def read_text(self, file_path):
+        """Legge un file di testo da R2. Ritorna None se non esiste o non e' leggibile."""
+        full_path = self._get_full_path(file_path)
+        try:
+            response = self.s3.get_object(Bucket=self.bucket_name, Key=full_path)
+            return response['Body'].read().decode('utf-8')
+        except Exception as e:
+            print(f"R2: {full_path} non leggibile: {e}")
+            return None
 
     def write_file(self, file_path, content, is_json=False):
         """Scrive un file su R2 (HTML o JSON)."""
@@ -2467,6 +2536,11 @@ def get_sentiment_for_all_symbols(symbol_list):
         try:
             ticker = str(adjusted_symbol).strip().upper()
             data = scarica_storico(ticker)
+            try:
+                data = recupera_sedute_perse(
+                    ticker, data, r2_manager.read_text(f"{TARGET_FOLDER}/{symbol.upper()}_RESULT.html"))
+            except Exception as e:  # il recupero non deve mai far saltare l'analisi del titolo
+                print(f"⚠️ {ticker}: recupero sedute non riuscito: {e}")
             controlla_salute_storico(ticker, data)
 
             if not data.empty:
