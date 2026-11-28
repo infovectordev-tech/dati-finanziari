@@ -73,6 +73,7 @@ TICKER_MAP = {
     "DXJ": "DXJ", "EWH": "EWH", "ASHR": "ASHR", "INDY": "INDY", "EPI": "EPI", 
     "EWY": "EWY", "TLT": "TLT", "GLD": "GLD", "XLF": "XLF", "XLK": "XLK", "XLE": "XLE",
     "XEON.MI": "XEON.MI",
+    "VWCE.MI": "VWCE.MI", "AGGH.MI": "AGGH.MI", "XNAS.MI": "XNAS.MI", "EIMI.MI": "EIMI.MI",
     "EURUSD": "EURUSD=X", "USDJPY": "USDJPY=X", "GBPUSD": "GBPUSD=X",
     "AUDUSD": "AUDUSD=X", "USDCAD": "USDCAD=X", "USDCHF": "USDCHF=X",
     "NZDUSD": "NZDUSD=X", "EURGBP": "EURGBP=X", "EURJPY": "EURJPY=X",
