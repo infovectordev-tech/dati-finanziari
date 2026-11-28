@@ -71,7 +71,9 @@ def decimali_indicatori(price):
         return 2
     if p >= 10 or p <= 0:
         return 2
-    return min(8, 4 - math.floor(math.log10(p)))  # 1.0972 -> 4, 0.5432 -> 5
+    # Tetto a 6: cosi' nessun valore resta tra 0 e 1e-6. Sotto quella soglia pandas scrive
+    # TUTTA la colonna in notazione scientifica, che l'app Java (Analisi) non sa leggere.
+    return min(6, 4 - math.floor(math.log10(p)))  # 1.0972 -> 4, 0.5432 -> 5
 
 def fmt_micro(val):
     # Decimali fissi (mai notazione scientifica: l'app mostra alcune stringhe cosi' come sono)
@@ -1249,6 +1251,10 @@ asset_sector_map = {
     "GLD": "15. ETFs & Funds", "XLF": "15. ETFs & Funds", "XLK": "15. ETFs & Funds", 
     "XLE": "15. ETFs & Funds",
     "XEON.MI": "15. ETFs & Funds",
+    "VWCE.MI": "15. ETFs & Funds",
+    "AGGH.MI": "15. ETFs & Funds",
+    "XNAS.MI": "15. ETFs & Funds",
+    "EIMI.MI": "15. ETFs & Funds",
     "COCOA": "16. Agricultural Commodities", "WHEAT": "16. Agricultural Commodities",
     "CORN": "16. Agricultural Commodities", "SOYBEANS": "16. Agricultural Commodities",
     "SUGAR": "16. Agricultural Commodities"
@@ -1266,6 +1272,11 @@ EXCLUDED_FROM_RANKINGS = [
     # Dati di servizio per l'app: cambi USD/xxx (valute del portafoglio) e ETF monetario XEON.
     # Hanno pagina _RESULT.html e prezzi live, ma non devono comparire in classifiche, settori, news, ecc.
     "XEON.MI",
+    # ETF UCITS quotati a Milano (portafogli in euro): stessa regola di XEON.
+    "VWCE.MI",
+    "AGGH.MI",
+    "XNAS.MI",
+    "EIMI.MI",
     "USDSEK",
     "USDNOK",
     "USDDKK",
@@ -1333,6 +1344,7 @@ TICKER_MAP = {
     "GLD": "GLD", "XLF": "XLF", "XLK": "XLK", "XLE": "XLE",
     "URTH": "URTH", "BND": "BND", "IEMG": "IEMG",
     "XEON.MI": "XEON.MI",
+    "VWCE.MI": "VWCE.MI", "AGGH.MI": "AGGH.MI", "XNAS.MI": "XNAS.MI", "EIMI.MI": "EIMI.MI",
     "EURUSD": "EURUSD=X", "USDJPY": "USDJPY=X", "GBPUSD": "GBPUSD=X",
     "AUDUSD": "AUDUSD=X", "USDCAD": "USDCAD=X", "USDCHF": "USDCHF=X",
     "NZDUSD": "NZDUSD=X", "EURGBP": "EURGBP=X", "EURJPY": "EURJPY=X",
@@ -1472,6 +1484,10 @@ symbol_name_map = {
     "VT": ["VT", "Vanguard Total World Stock", "VT ETF", "Total World Stock ETF", "Global Stock ETF Vanguard", "All-World ETF Vanguard", "Vanguard VT"],
     "BNDW": ["BNDW", "Vanguard Total World Bond", "BNDW ETF", "Global Bond ETF Vanguard", "Total World Bond ETF", "World Aggregate Bond ETF", "Vanguard BNDW"],
     "XEON.MI": ["XEON", "Xtrackers EUR Overnight Rate Swap", "Xtrackers II EUR Overnight Rate Swap UCITS ETF", "XEON ETF", "Xtrackers XEON", "Euro overnight ETF", "Euro money market ETF", "ETF monetario Euro", "EONIA ETF", "ESTR ETF"],
+    "VWCE.MI": ["VWCE", "Vanguard FTSE All-World UCITS ETF", "Vanguard FTSE All-World", "VWCE ETF", "FTSE All-World UCITS", "IE00BK5BQT80"],
+    "AGGH.MI": ["AGGH", "iShares Core Global Aggregate Bond UCITS ETF", "iShares Core Global Aggregate Bond", "AGGH ETF", "Global Aggregate Bond EUR Hedged", "IE00BDBRDM35"],
+    "XNAS.MI": ["XNAS", "Xtrackers NASDAQ 100 UCITS ETF", "Xtrackers NASDAQ 100", "XNAS ETF", "Xtrackers Nasdaq 100 ETF", "IE00BMFKG444"],
+    "EIMI.MI": ["EIMI", "iShares Core MSCI EM IMI UCITS ETF", "iShares Core MSCI EM IMI", "EIMI ETF", "MSCI EM IMI", "IE00BKM4GZ66"],
     "IWM": ["IWM", "iShares Russell 2000", "Russell 2000 ETF", "IWM ETF", "US Small Cap ETF", "iShares IWM"],
     "VIXY": ["VIXY", "ProShares VIX Short-Term Futures", "VIXY ETF", "VIX Short-Term ETF", "VIX Futures ETF", "ProShares VIXY"],
     "EFA": ["EFA", "MSCI EAFE", "MSCI EAFE ETF", "iShares MSCI EAFE", "Developed Markets ex-US ETF", "EAFE Index ETF", "iShares EFA"],
