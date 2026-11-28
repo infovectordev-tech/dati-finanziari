@@ -61,6 +61,18 @@ def is_micro_price(price):
     try: return 0 < abs(float(price)) < SOGLIA_MICRO_PREZZO
     except (TypeError, ValueError): return False
 
+def decimali_indicatori(price):
+    """Decimali per gli indicatori espressi in prezzo (MACD, EMA, Bollinger).
+    Sopra 10 bastano 2 (azioni, BTC, oro: invariato). Sotto 10 servono di piu':
+    con 2 decimali EURUSD aveva EMA 1.10 e BB 1.13 (il pip e' al 4o decimale)."""
+    try:
+        p = abs(float(price))
+    except (TypeError, ValueError):
+        return 2
+    if p >= 10 or p <= 0:
+        return 2
+    return min(8, 4 - math.floor(math.log10(p)))  # 1.0972 -> 4, 0.5432 -> 5
+
 def fmt_micro(val):
     # Decimali fissi (mai notazione scientifica: l'app mostra alcune stringhe cosi' come sono)
     return f"{float(val):.12f}".rstrip("0").rstrip(".")
@@ -2616,18 +2628,19 @@ def get_sentiment_for_all_symbols(symbol_list):
                 cci = CCIIndicator(high, low, close).cci().iloc[-1]
                 will_r = WilliamsRIndicator(high, low, close).williams_r().iloc[-1]
                 bb = BollingerBands(close)
-                
+                dp = decimali_indicatori(current_price)  # solo per gli indicatori in unita' di prezzo
+
                 indicators = {
                     "RSI (14)": round(rsi, 2),
-                    "MACD Line": round(macd_line, 2),
-                    "MACD Signal": round(macd_signal, 2),
+                    "MACD Line": round(macd_line, dp),
+                    "MACD Signal": round(macd_signal, dp),
                     "Stochastic %K": round(stoch_k, 2),
                     "Stochastic %D": round(stoch_d, 2),
-                    "EMA (10)": round(ema_10, 2),
+                    "EMA (10)": round(ema_10, dp),
                     "CCI (14)": round(cci, 2),
                     "Williams %R": round(will_r, 2),
-                    "BB Upper": round(bb.bollinger_hband().iloc[-1], 2),
-                    "BB Lower": round(bb.bollinger_lband().iloc[-1], 2),
+                    "BB Upper": round(bb.bollinger_hband().iloc[-1], dp),
+                    "BB Lower": round(bb.bollinger_lband().iloc[-1], dp),
                     "BB Width": round(bb.bollinger_wband().iloc[-1], 4),
                 }
                 micro = is_micro_price(current_price)
